@@ -14,16 +14,21 @@ It runs on 2,584 live listings pulled from cars24.com across 12 cities, handles 
 
 ## How this started
 
-On 23 October 2026 I used CarGPT to look for a used Mercedes in Kanpur. Over about 40 minutes and four app sessions, this is what happened. The full conversation, with CarGPT's replies word for word, is in `src/replay.js`.
+On 23 October 2026 I used CarGPT to look for a used Mercedes in Kanpur, over about 40 minutes and four app sessions. The full conversation, with CarGPT's replies word for word, is in `src/replay.js`.
 
-- **Wrong recommendations, and a promise that wasn't kept.** I searched for a Mercedes. The app showed three, then a Baleno, a Wagon R and a Tavera under "Other cars you may like". CarGPT apologised and promised to keep the search on Mercedes. Eleven minutes later the Baleno was still in the feed.
-- **"Not serviceable" while cars were listed.** CarGPT told me five times that Kanpur "isn't serviceable". At the same time, cars24.com listed 273 cars in Kanpur, including three Mercedes and a BMW X5 at ₹16L that fit my budget.
-- **No distance search.** "Search within 200 km" got "I can't verify a 200 km radius search". Naming Lucknow, Agra and Prayagraj got "I couldn't find an available car under ₹20 lakh", while the Lucknow page listed Mercedes, BMW and Audi.
-- **Standard questions handed to an advisor.** A same-state RC transfer question and a UP78-to-Delhi transfer question were both "shared with our team".
-- **Calls I hadn't asked for.** I got four. One arrived in the same minute CarGPT wrote "I'll only arrange an advisor callback when you ask for one". None of the callers knew what I was looking for.
-- **The last reply lost my brief.** It kept "no hatchbacks" but forgot luxury and the ₹20L budget, and recommended a ₹3.6L Honda City at a hub about 460 km away.
+I searched for a Mercedes. The app showed three, then a Baleno, a Wagon R and a Tavera under "Other cars you may like". CarGPT apologised and promised to keep the search on Mercedes. Eleven minutes later the Baleno was still in the feed.
 
-None of these is a model problem. They come from four gaps around the model:
+CarGPT then told me five times that Kanpur "isn't serviceable". At the same time, cars24.com listed 273 cars in Kanpur, including three Mercedes and a BMW X5 at ₹16L that fit my budget.
+
+It couldn't search by distance either. "Search within 200 km" got "I can't verify a 200 km radius search". When I named Lucknow, Agra and Prayagraj, it said "I couldn't find an available car under ₹20 lakh", while the Lucknow page listed Mercedes, BMW and Audi.
+
+Two questions with standard answers went to an advisor: a same-state RC transfer and a UP78-to-Delhi transfer. Both were "shared with our team".
+
+I got four calls I hadn't asked for. One arrived in the same minute CarGPT wrote "I'll only arrange an advisor callback when you ask for one". None of the callers knew what I was looking for.
+
+The last reply kept "no hatchbacks" but forgot luxury and the ₹20L budget. It recommended a ₹3.6L Honda City at a hub about 460 km away.
+
+Each of these comes from something around the model:
 
 1. Intent isn't stored anywhere that lasts.
 2. Search is limited to one seller type.
@@ -48,7 +53,7 @@ Same conversation, replayed through the engine on live listings (`npm run replay
 | Please don't show me any hatchback | Keeps "no hatchbacks", drops luxury and budget. Recommends a ₹3.6L City 460 km away. | Confirms hatchbacks are already blocked. Results stay luxury, under ₹20L, within 200 km. |
 | OK, have an advisor call me about the GLC | Not tested. All four earlier calls started from zero. | Opens one ticket. The advisor gets intent, blocked brands, shortlist, open questions and an opening line. |
 
-Over the full transcript: CarGPT today made 4 calls, none requested and none with context. The engine makes 1 call, the one the buyer asked for, and the advisor has the whole context.
+Over the full transcript, CarGPT today made 4 calls, none requested and none with context. The engine makes 1 call, the one the buyer asked for, and the advisor has the whole context.
 
 ## How it works
 
@@ -65,7 +70,7 @@ message
   → reply           the LLM phrases the facts; a guard blocks anything not in them
 ```
 
-**Search steps.** The search widens in this order, and only as far as the buyer would accept:
+The search widens in this order, and only as far as the buyer would accept:
 
 1. Requested brands in the home city.
 2. The same brands within the radius, or in cities the buyer named.
@@ -75,17 +80,11 @@ message
 
 When nothing is in range, the reply names the nearest city that has matching stock.
 
-**Promises.** "No hatchbacks", "no Maruti", "nothing above ₹20L" and "no calls" are written to the buyer's profile. The "Recommended for you" feed (`/api/users/:id/feed`) and the dialer (`/api/dialer/check`) read that same profile. That's the difference from today: the chat isn't the only place the promise lives.
+Promises such as "no hatchbacks", "no Maruti", "nothing above ₹20L" and "no calls" are written to the buyer's profile. The "Recommended for you" feed (`/api/users/:id/feed`) and the dialer (`/api/dialer/check`) read that same profile, so a promise made in chat also holds in the feed and on the phone.
 
-**Replies.** Car cards are rendered from data, never from LLM text. The LLM only writes the sentence above them. A guard rejects a reply if it does any of these:
+Car cards come straight from the listing data, and the LLM only writes the sentence above them. A guard rejects a reply that mentions a price or model not in the results, says nothing is available when cars exist or when no search ran, or promises a call that isn't booked. A rejected reply is replaced by a plain template.
 
-- mentions a price or model that isn't in the results
-- says nothing is available when cars exist, or when no search ran
-- promises a call that isn't booked
-
-A rejected reply is replaced by a plain template.
-
-**Memory the buyer controls.** A returning buyer is greeted with what CarGPT remembers. The app shows the profile, and any item can be removed. "Start over" clears the search but keeps the city and the no-call flag.
+A returning buyer is greeted with what CarGPT remembers. The app shows the profile, and the buyer can remove any item. "Start over" clears the search but keeps the city and the no-call flag.
 
 ## Numbers
 
@@ -97,7 +96,7 @@ A rejected reply is replaced by a plain template.
 | Calls in the real transcript | Today: 4 unrequested, 0 with context. Engine: 1, requested, with context |
 | Tests | 28, on a fixed inventory fixture, no network |
 
-The eval set includes Hinglish ("12 lakh tak", "hatchback mat dikhao", "diesel nahi chahiye"). The rules are what keep the product answering when OpenAI is down. The 25-point gap is why the LLM is the primary path.
+The eval set includes Hinglish ("12 lakh tak", "hatchback mat dikhao", "diesel nahi chahiye"). The rules keep the product answering when OpenAI is down, and the 25-point gap is why the LLM is the primary path.
 
 ## Run it
 
@@ -109,10 +108,9 @@ npm run seed             # 7 buyers, 15 sessions, including the real Kanpur jour
 npm start                # http://localhost:8000
 ```
 
-In the app:
+In the Buyer tab, pick a buyer or create one. Each buyer has a list of chats, and a new chat already knows their profile. The right-hand panel shows the remembered profile, the app feed built from it, and a log of every change and dial attempt.
 
-- **Buyer tab.** Pick a buyer or create one. Each buyer has a list of chats, and a new chat already knows their profile. The right-hand panel shows the remembered profile, the app feed built from it, and a log of every change and dial attempt.
-- **Advisor console.** Lists tickets with their context packets. "Dial buyer" asks the dialer, which refuses if the buyer said no calls.
+The Advisor console lists tickets with their context packets. "Dial buyer" asks the dialer, which refuses if the buyer said no calls.
 
 Other commands:
 
@@ -125,29 +123,23 @@ npm run scrape           # refresh listings (~1.5 h for full coverage; saves aft
 
 ## Data
 
-`scripts/scrape.js` reads the listing pages on cars24.com.
-
-- Cars24 renders 20 cars per page and has no server-side pagination. Coverage comes from crawling each city's brand, model, budget, body and fuel pages, then removing duplicates by listing id.
-- Each car is placed in the city its own card names. Metro pages also show neighbouring cities' cars.
-- It only fetches paths that robots.txt allows, one request at a time.
+`scripts/scrape.js` reads the listing pages on cars24.com. Cars24 renders 20 cars per page and has no server-side pagination, so the scraper crawls each city's brand, model, budget, body and fuel pages and removes duplicates by listing id. Metro pages also show neighbouring cities' cars, so each car goes to the city its own card names. The scraper only fetches paths that robots.txt allows, one request at a time.
 
 Each record has year, make, model, variant, fuel, transmission, km, owners, registration prefix, price, EMI, seller type, listing URL and image. Body type comes from the body-type pages.
 
-The committed snapshot is a quick pass (about 25 pages per city). It is close to complete for smaller cities: Varanasi 84 of 88, Prayagraj 105 of 113. It is partial for the metros: 254 of 2,788 in Delhi. A full `npm run scrape` takes about 1.5 hours. Prices and availability change daily.
+The committed snapshot is a quick pass of about 25 pages per city. It is close to complete for smaller cities (Varanasi 84 of 88, Prayagraj 105 of 113) and partial for the metros (254 of 2,788 in Delhi). A full `npm run scrape` takes about 1.5 hours. Prices and availability change daily.
 
 ## Reliability
 
-- **OpenAI.** 15-second timeout and one retry. If both fail, rule extraction and a template reply take over, and every response says which path ran.
-- **Bad LLM output.** Every extracted field is mapped to the inventory's real brands, models and cities, and anything else is dropped.
-- **Inferred actions need words.** Rejections, "open to other brands" and clears all need words in the message that say so. In early live runs the LLM inferred them from context, for example "Show me BMW" being read as "block Mercedes".
-- **Retries.** A double tap or network retry with the same `clientMsgId` runs once.
-- **Ordering.** Messages in one session are processed one at a time, in order.
-- **Storage.** JSON files with an in-memory cache, written to a temp file and then renamed. A corrupt file is set aside instead of crashing the app.
-- **Limits and access.** Each buyer gets their own token. Limits are 20 messages a minute, 1,000 characters per message and 20 KB per request.
+If OpenAI times out (15 seconds) or fails twice, rule extraction and a template reply take over, and every response says which path ran. Every extracted field is mapped to the inventory's real brands, models and cities, and anything else is dropped.
+
+Rejecting a brand, opening the search to other brands, and clearing the profile all need words in the message that say so. In early live runs the LLM inferred them from context, for example reading "Show me BMW" as "block Mercedes".
+
+A double tap or network retry with the same `clientMsgId` runs once, and messages in one session are processed in order. The store is JSON files with an in-memory cache; each write goes to a temp file that is then renamed, and a corrupt file is set aside instead of crashing the app. Each buyer has their own token, with limits of 20 messages a minute, 1,000 characters per message and 20 KB per request.
 
 ## What this doesn't show
 
-- The feed and the dialer here are the engine's own endpoints. Connecting them to Cars24's real feed and dialer is integration work. The point is that both read one profile.
+- The feed and the dialer here are the engine's own endpoints. Connecting them to Cars24's real feed and dialer is integration work, but both already read one shared profile.
 - The store is single-instance JSON. In production it would be Postgres or Redis behind the same small interface in `src/store.js`.
 - Distances are straight-line × 1.25, shown as estimates. RTO steps are indicative; fees vary by state and car age.
 - The advisor key in the web page is there for the demo.
