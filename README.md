@@ -57,23 +57,49 @@ Over the full transcript, CarGPT today made 4 calls, none requested and none wit
 
 ## How it works
 
+Each turn is run by a team of agents that share one blackboard. A coordinator schedules them by dependency, so agents that don't depend on each other run together. It also records every run, skip, failure and event in the turn's `agents` trace.
+
 ```
-message
-  → understand      OpenAI structured output, with the buyer's profile and recent turns as context;
-                    rules take over if the LLM fails
-  → remember        merge into one profile per buyer, shared by every session, the app feed,
-                    the advisor and the dialer
-  → answer          RC transfer and on-road cost from rules and the listing
-  → search          every seller type, in steps that keep intent (below)
-  → promise         each promise maps to the system that enforces it
-  → call gate       call only on request; otherwise ask, or keep it in chat
-  → reply           the LLM phrases the facts; a guard blocks anything not in them
+wave 0  intent       OpenAI structured output, with the profile, intents ranked by recency and
+                     recent turns as context; rules take over if the LLM fails
+wave 1  memory       records the message in the intent ledger, merges it into the one shared
+                     profile (newest statement wins), re-ranks every intent by recency
+wave 2  answers  ∥   RC transfer and on-road cost from rules and the listing
+        search       every seller type, in steps that keep intent (below), brands ranked by recency
+wave 3  promises     each promise maps to the system that enforces it; independently audits the
+                     search results and pulls any car that breaks a standing promise
+wave 4  escalation   call only on request; otherwise ask, or keep it in chat. Reacts at once
+                     to "consent.revoked" from memory and cancels any pending callback
+wave 5  reply        the LLM phrases the facts; a guard blocks anything not in them
 ```
 
-The search widens in this order, and only as far as the buyer would accept:
+If a non-critical agent fails (answers, search, promises, escalation), the failure is traced and the turn still gets a reply. Agents are plain objects (`name`, `after`, `when`, `run`, `on`) in `src/agents/`, so you can add or replace one without touching the engine. The tests replace the search agent with one that fails or leaks results.
 
-1. Requested brands in the home city.
-2. The same brands within the radius, or in cities the buyer named.
+### Intent by recency
+
+The profile says what the buyer wants. The intent ledger (`src/agents/ledger.js`) says when they last said it. Every chat message, app tap and "forget" is written to the ledger with its turn number and time. Each remembered intent gets a weight:
+
+```
+weight = 0.5^(turns since last mentioned / 6) × 0.5^(days since / 14)
+```
+
+- The brand named most recently leads. Brands asked for earlier are ranked newest first, both in the "asked earlier" search step and in scoring.
+- Repeating an intent refreshes it, even if the profile doesn't change.
+- When two statements conflict, the newer one wins. Asking for a brand you blocked unblocks it. A new budget replaces the old one.
+- A preference that isn't repeated fades to dormant. It stays in the profile but ranks last, and a returning buyer is told it is from a while back.
+- Constraints never decay: blocked brands and models, excluded bodies and fuels, the budget cap, hidden listings and "no calls". These are promises, and only the buyer can lift them.
+- A car the buyer only asked about ("on-road cost of the GLC") or viewed in the app counts as interest. It gives a small ranking boost but never becomes a filter.
+
+The advisor's context packet lists the buyer's latest intents first, so the advisor opens with what the buyer wants now.
+
+The search starts from where the buyer is. The app asks the browser for a GPS fix and sends it with every message; if the buyer declines, or the fix is more than 6 hours old, the search starts from their home city. The home city stays separate because RTO rules depend on it, so a Kanpur buyer travelling in Lucknow sees Lucknow cars first but still gets Kanpur transfer answers.
+
+The message decides the scope. A city named in it ("any Audi in Lucknow?") anchors that turn's search. "Within 150 km" is used exactly. Without a stated radius, the search tries 25, 50, 100, 200 and then 400 km from the buyer and stops at the first ring with at least six matching cars. "Near me" never sets a radius by itself. Every distance is measured from the buyer's position to each city's centre.
+
+Within that scope, the search widens in this order, and only as far as the buyer would accept:
+
+1. Requested brands in the anchor city (the one the buyer is in, or the one they named).
+2. The same brands within the radius, or in cities the buyer named earlier.
 3. Brands the buyer asked for earlier.
 4. The same segment from other brands. A luxury buyer sees luxury.
 5. Cheaper or other-segment cars are counted but withheld unless the buyer opts in.
@@ -94,7 +120,7 @@ A returning buyer is greeted with what CarGPT remembers. The app shows the profi
 | Seller types covered | Direct sellers (1,295) and Cars24 stock (1,289) |
 | Intent extraction on 40 reworded messages the rules were never tuned on | OpenAI (gpt-4.1-mini): 38/40 (95%). Rules alone: 28/40 (70%). `npm run eval:llm` |
 | Calls in the real transcript | Today: 4 unrequested, 0 with context. Engine: 1, requested, with context |
-| Tests | 28, on a fixed inventory fixture, no network |
+| Tests | 50, on a fixed inventory fixture, no network |
 
 The eval set includes Hinglish ("12 lakh tak", "hatchback mat dikhao", "diesel nahi chahiye"). The rules keep the product answering when OpenAI is down, and the 25-point gap is why the LLM is the primary path.
 
@@ -108,14 +134,18 @@ npm run seed             # 7 buyers, 15 sessions, including the real Kanpur jour
 npm start                # http://localhost:8000
 ```
 
-In the Buyer tab, pick a buyer or create one. Each buyer has a list of chats, and a new chat already knows their profile. The right-hand panel shows the remembered profile, the app feed built from it, and a log of every change and dial attempt.
+The browser asks for your location when the app opens; allow it to search from where you are, or use "📍 Use my location" later. A new buyer can sign up with "Detect with GPS" instead of picking a city. In the Buyer tab, pick a buyer or create one. Each buyer has a list of chats, and a new chat already knows their profile. The right-hand panel shows the remembered profile, the app feed built from it, and a log of every change and dial attempt.
+
+Each CarGPT reply has an expandable agent trace. The side panel ranks remembered intents by recency.
+
+`POST /api/users/:id/location` with `{ "lat", "lon", "accuracy" }` updates the buyer's position; messages can also carry a `location` field. Between chats the app can send signals: `POST /api/users/:id/signals` with `{ "type": "view" | "shortlist" | "dismiss", "carId": "…" }`. "dismiss" hides that listing everywhere. "view" and "shortlist" record interest. `GET /api/users/:id/intents` returns the ranked intents and the ledger.
 
 The Advisor console lists tickets with their context packets. "Dial buyer" asks the dialer, which refuses if the buyer said no calls.
 
 Other commands:
 
 ```bash
-npm test                 # 28 tests
+npm test                 # 50 tests
 npm run replay           # the real transcript, CarGPT today vs the engine, turn by turn
 npm run eval:llm         # rules vs OpenAI on 40 reworded messages
 npm run scrape           # refresh listings (~1.5 h for full coverage; saves after each city)
@@ -133,7 +163,7 @@ The committed snapshot is a quick pass of about 25 pages per city. It is close t
 
 If OpenAI times out (15 seconds) or fails twice, rule extraction and a template reply take over, and every response says which path ran. Every extracted field is mapped to the inventory's real brands, models and cities, and anything else is dropped.
 
-Rejecting a brand, opening the search to other brands, and clearing the profile all need words in the message that say so. In early live runs the LLM inferred them from context, for example reading "Show me BMW" as "block Mercedes".
+Anything the LLM extracts that changes what the buyer sees everywhere needs words in the message that say so. That covers asking for or rejecting a brand, opening the search to other brands, clearing the profile, moving the home city and setting a radius. In live runs the LLM inferred these from earlier turns: it read "Show me BMW" as "block Mercedes", carried "Maruti" into a later turn (which unblocked it), moved the buyer to Delhi because a previous message mentioned Delhi, and attached 50 km to "near me".
 
 A double tap or network retry with the same `clientMsgId` runs once, and messages in one session are processed in order. The store is JSON files with an in-memory cache; each write goes to a temp file that is then renamed, and a corrupt file is set aside instead of crashing the app. Each buyer has their own token, with limits of 20 messages a minute, 1,000 characters per message and 20 KB per request.
 
@@ -141,7 +171,7 @@ A double tap or network retry with the same `clientMsgId` runs once, and message
 
 - The feed and the dialer here are the engine's own endpoints. Connecting them to Cars24's real feed and dialer is integration work, but both already read one shared profile.
 - The store is single-instance JSON. In production it would be Postgres or Redis behind the same small interface in `src/store.js`.
-- Distances are straight-line × 1.25, shown as estimates. RTO steps are indicative; fees vary by state and car age.
+- Inventory is known per city, not per street, so distances run from the buyer to each city's centre, as straight-line × 1.25. They are shown as estimates. RTO steps are indicative; fees vary by state and car age.
 - The advisor key in the web page is there for the demo.
 
 ## Code
@@ -149,11 +179,15 @@ A double tap or network retry with the same `clientMsgId` runs once, and message
 | | |
 |---|---|
 | `server.js` | HTTP API and web app |
-| `src/engine.js` | Users, sessions, tickets, one turn end to end |
+| `src/engine.js` | Users, sessions, persistence, app signals; hands each turn to the agents |
+| `src/agents/coordinator.js` | Dependency-scheduled agent runner, blackboard, event bus, trace |
+| `src/agents/ledger.js` | Intent ledger and recency ranking |
+| `src/agents/*-agent.js` | Intent, memory, answers, search, promises, escalation, reply |
 | `src/extract.js`, `src/llm.js`, `src/parse.js` | OpenAI extraction, client, rule fallback |
 | `src/intent.js` | Intent schema and `normalise()`, the only way into a profile |
 | `src/profile.js` | Profile merge, forget, summary |
 | `src/search.js` | Step-by-step search with distance |
+| `src/location.js` | GPS fix, nearest city, distance from the buyer |
 | `src/policy.js` | Promises, feed, dialer check, escalation, context packet |
 | `src/reply.js` | LLM reply, guard, template |
 | `src/rules.js` | Brand tiers, state codes, RC transfer, on-road cost |

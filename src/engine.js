@@ -1,17 +1,17 @@
-// CarGPT Intent Engine: users, sessions and one buyer turn.
+// CarGPT Intent Engine: users, sessions, tickets, and one buyer turn run by a team of agents.
 //
-//   message → extract (OpenAI, rules fallback) → merge into the user's profile (shared across
-//   sessions) → rule answers (RC transfer, on-road) → fallback-ladder search → promise guard →
-//   escalation gate → grounded reply → persist everything.
+//   message → [intent] → [memory: ledger + recency] → [answers ∥ search] → [promises: audit]
+//           → [escalation] → [reply] → persist
+//
+// The agents live in src/agents/ and share one blackboard per turn; the coordinator schedules them
+// by dependency and traces every run. This file owns identity, sessions and persistence.
+import { validPoint, locate } from "./location.js";
 import { Store, newId, newToken, serial } from "./store.js";
-import { extract } from "./extract.js";
-import { newProfile, merge, describe, lakh } from "./profile.js";
-import { search } from "./search.js";
-import { transferAnswer, onRoadAnswer } from "./rules.js";
-import { commitmentsFor, escalationDecision, contextPacket } from "./policy.js";
-import { writeReply } from "./reply.js";
+import { newProfile, describe, forget, lakh } from "./profile.js";
+import { feedFor } from "./policy.js";
 import { inventory, findCity } from "./inventory.js";
 import { config } from "./config.js";
+import { createCoordinator, IntentLedger, recencyWeights } from "./agents/index.js";
 
 export class AppError extends Error {
   constructor(status, code, message) { super(message); this.status = status; this.code = code; }
@@ -19,24 +19,50 @@ export class AppError extends Error {
 
 const clean = (s, max) => String(s ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim().slice(0, max);
 const now = () => new Date().toISOString();
+const SIGNALS = ["view", "shortlist", "dismiss"];
+// Old preferences the buyer hasn't repeated still count, but rank last; say so instead of guessing.
+const dormantNote = (pr) => {
+  const d = pr.filter((x) => x.status === "dormant").map((x) => x.label);
+  return d.length ? ` (${d.join(", ")} ${d.length === 1 ? "is" : "are"} from a while back, so I'll rank ${d.length === 1 ? "it" : "them"} lower unless you bring ${d.length === 1 ? "it" : "them"} up.)` : "";
+};
 
 export class Engine {
-  constructor({ store = new Store(), fetchImpl } = {}) {
+  constructor({ store = new Store(), fetchImpl, coordinator = createCoordinator() } = {}) {
     this.store = store;
     this.fetchImpl = fetchImpl;
     this.hits = new Map(); // userId → timestamps, for the per-user rate limit
+    this.ledger = new IntentLedger(store);
+    this.coordinator = coordinator;
+    // What agents may touch outside the blackboard.
+    this.services = { store, fetchImpl, ledger: this.ledger, sessionCount: (userId) => this.sessionsOf(userId).length };
   }
 
   // ---------- users ----------
-  createUser({ name, homeCity, phone }) {
+  // A buyer signs up with a city, a GPS fix, or both. With only a fix, the nearest Cars24 city
+  // becomes their home city (used for RTO rules); the fix itself is the search origin.
+  createUser({ name, homeCity, phone, location }) {
     name = clean(name, 60);
     if (!name) throw new AppError(400, "name_required", "Name is required");
-    const city = findCity(homeCity);
-    if (!city) throw new AppError(400, "unknown_city", `Unknown city. Cities with listings: ${inventory().cities.map((c) => c.name).join(", ")}`);
-    const user = { id: newId("usr"), name, phone: phone ? clean(phone, 15).replace(/\d(?=\d{4})/g, "•") : null, token: newToken(), createdAt: now(), profile: newProfile(city.name) };
+    if (location !== undefined && location !== null && !validPoint(location)) throw new AppError(400, "bad_location", "location needs numeric lat and lon");
+    const fix = location ? locate(location) : null;
+    const city = findCity(homeCity) || (!homeCity && fix ? findCity(fix.city) : null);
+    if (!city) throw new AppError(400, "unknown_city", `Unknown city. Share your location or pick one of: ${inventory().cities.map((c) => c.name).join(", ")}`);
+    const profile = newProfile(city.name);
+    profile.location = fix;
+    const user = { id: newId("usr"), name, phone: phone ? clean(phone, 15).replace(/\d(?=\d{4})/g, "•") : null, token: newToken(), createdAt: now(), profile };
     this.store.put("users", user.id, user);
-    this.store.append("events", user.id, { at: now(), type: "signup", detail: `Signed up in ${city.name}` });
+    this.store.append("events", user.id, { at: now(), type: "signup", detail: `Signed up in ${city.name}${fix ? ` (GPS: near ${fix.city}, ~${fix.cityKm} km)` : ""}` });
     return user;
+  }
+
+  setLocation(userId, location) {
+    if (!validPoint(location)) throw new AppError(400, "bad_location", "location needs numeric lat and lon");
+    const u = this.user(userId);
+    const fix = locate(location);
+    const moved = !u.profile.location || u.profile.location.city !== fix.city;
+    this.store.update("users", userId, (x) => { x.profile.location = fix; });
+    if (moved) this.store.append("events", userId, { at: now(), type: "location", changes: [`Location: near ${fix.city} (~${fix.cityKm} km)`], source: "gps" });
+    return { location: fix, summary: describe(u.profile) };
   }
 
   user(userId) {
@@ -64,7 +90,7 @@ export class Engine {
     // A returning buyer is greeted with what CarGPT remembers, not a blank "how can I help".
     const p = u.profile;
     const greeting = prior && (p.brands.length || p.budgetMax || p.excludeBodies.length)
-      ? `Welcome back, ${u.name.split(" ")[0]}. Still looking for ${describe(p)}? I can pick up from there, or say “start over”.`
+      ? `Welcome back, ${u.name.split(" ")[0]}. Still looking for ${describe(p)}? I can pick up from there, or say “start over”.${dormantNote(this.ledger.priorities(u.id, p))}`
       : `Hi ${u.name.split(" ")[0]}. Tell me what you're looking for: brand, budget, body type. I search every seller on Cars24 in ${p.homeCity} and nearby.`;
     this.store.append("messages", s.id, { id: newId("msg"), role: "assistant", text: greeting, at: now(), meta: { greeting: true } });
     return { session: s, greeting };
@@ -86,9 +112,10 @@ export class Engine {
     this.hits.set(userId, win);
   }
 
-  async handleMessage(userId, sessionId, rawText, { clientMsgId } = {}) {
+  async handleMessage(userId, sessionId, rawText, { clientMsgId, location } = {}) {
     const u = this.user(userId);
     this.session(userId, sessionId);
+    if (location) this.setLocation(userId, location); // the app sends its latest GPS fix with each message
     const text = clean(rawText, config.maxMessageChars);
     if (!text) throw new AppError(400, "empty_message", "Message is empty");
     // Retried request (double tap, flaky network): return the stored turn instead of running it twice.
@@ -108,60 +135,26 @@ export class Engine {
   async #turn(u, sessionId, text, clientMsgId) {
     const started = Date.now();
     const p = u.profile;
-    const recent = this.messages(sessionId).slice(-6);
-    const ex = await extract(text, { profile: p, recent, store: this.store, fetchImpl: this.fetchImpl });
-    const d = ex.delta;
-    // A car named in a question ("on-road cost of the GLC") is not a new search filter.
-    if (d.intent === "question" && (d.onRoad || d.transfer)) { d.models = []; d.brands = d.brands.filter((b) => p.brands.includes(b)); }
-    const changes = merge(p, d);
-    const commitments = commitmentsFor(changes);
-    // Repeating a preference gets a confirmation that it is already enforced, not silence.
-    if (d.callConsent === false && !changes.some((c) => c.field === "callConsent")) commitments.push({ promise: "No calls from Cars24 (already on file)", enforcedBy: "Dialer suppression flag stays on", check: "dialer" });
-    for (const b of d.excludeBodies) if (!changes.some((c) => c.field === "excludeBodies" && c.value === b)) commitments.push({ promise: `No ${b}s (already on file)`, enforcedBy: "Shared intent profile filter stays on", check: "feed" });
-
-    // Rule answers
-    const answers = [];
-    let unresolved = null;
-    if (d.transfer) {
-      const a = transferAnswer(d.transfer, p.homeCity);
-      answers.push({ type: "transfer", ...a });
-      if (!a.resolved) unresolved = text;
-    }
-    if (d.onRoad) {
-      const car = this.#resolveCar(p, d.onRoad);
-      const a = car ? onRoadAnswer(car, p.homeCity) : { resolved: false, text: `I couldn't find ${d.onRoad.model ? `a ${d.onRoad.model}` : "that car"} in current listings near ${p.homeCity}. Which car do you mean?` };
-      answers.push({ type: "onroad", ...a });
-      if (!a.resolved) unresolved = text;
-    }
-
-    // Search when the message is about finding cars, or changed what they're looking for.
-    const filterChanged = changes.some((c) => !["callConsent", "homeCity"].includes(c.field));
-    const pureQuestion = (d.transfer || d.onRoad) && !d.brands.length && !d.budgetMax && !d.models.length;
-    const wantsCars = ["search", "preference", "complaint", "reset"].includes(d.intent) || filterChanged || d.useCurrentLocation;
-    const result = wantsCars && !pureQuestion && (p.brands.length || p.budgetMax || p.includeBodies.length || p.models.length || d.intent === "search") ? search(p) : null;
-    if (result) p.lastShown = result.shown.slice(0, 10).map((c) => ({ id: c.id, title: `${c.year} ${c.make} ${c.model}`, model: c.model }));
-    let needs = null;
-    if (d.useCurrentLocation) needs = `Using your city on file: ${p.homeCity}.`;
-
-    // Escalation
-    const tickets = this.store.list("tickets", (t) => t.userId === u.id && t.status === "open");
-    if (d.callConsent === false) for (const t of tickets.filter((t) => t.callRequested)) this.store.update("tickets", t.id, (x) => { x.callRequested = false; x.updates.push({ at: now(), text: "Call cancelled: buyer said no calls" }); });
-    const esc = escalationDecision(p, { unresolved, openTicket: tickets[0], askedNow: d.callConsent === true });
-    let ticket = null;
-    if (esc.escalate) ticket = this.#raiseTicket(u, sessionId, { call: esc.call, question: unresolved || (d.callConsent ? text : null) });
-    else if (unresolved && tickets[0]) this.store.update("tickets", tickets[0].id, (x) => { x.questions.push(unresolved); x.updates.push({ at: now(), text: `Added question: ${unresolved}` }); });
-
-    const turn = {
-      text, profile: p, profileSummary: describe(p), changes, commitments, answers, search: result, needs,
-      escalation: { ...esc, ticketId: ticket?.id || null }, extraction: { source: ex.source, error: ex.error || null, ms: ex.ms || null, delta: d },
-    };
-    const reply = await writeReply(turn, { store: this.store, fetchImpl: this.fetchImpl });
+    const ctx = this.coordinator.context({
+      user: u, profile: p, sessionId, text, recent: this.messages(sessionId).slice(-6),
+      prioritiesBefore: this.ledger.priorities(u.id, p),
+      services: this.services,
+      // Blackboard slots the agents fill in.
+      delta: null, extraction: null, changes: [], priorities: [], shownBefore: [], answers: [], unresolved: null,
+      search: null, needs: null, commitments: [], violations: [], cancelledCalls: [], escalation: null, ticket: null, reply: null,
+    });
+    await this.coordinator.run(ctx);
+    const { changes, commitments, answers, extraction, reply } = ctx;
+    const result = ctx.search;
+    const escalation = ctx.escalation || { escalate: false, reason: "Escalation agent did not run" };
 
     const out = {
       reply: reply.text, replySource: reply.source, replyRejected: reply.rejected || null,
-      extraction: turn.extraction, changes, commitments, answers,
-      search: result && { citiesSearched: result.citiesSearched, steps: result.steps.map((s) => ({ key: s.key, label: s.label, total: s.total, cars: s.cars.map(slim) })), beyond: result.beyond, withheld: result.withheld, matched: result.matched, home: result.home },
-      escalation: turn.escalation, packet: ticket?.packet || null,
+      extraction, changes, commitments, answers,
+      search: result && { citiesSearched: result.citiesSearched, steps: result.steps.map((s) => ({ key: s.key, label: s.label, total: s.total, cars: s.cars.map(slim) })), beyond: result.beyond, withheld: result.withheld, matched: result.matched, home: result.home, origin: result.origin, radiusKm: result.radiusKm, radiusMode: result.radiusMode },
+      escalation, packet: ctx.ticket?.packet || null,
+      priorities: ctx.priorities, violations: ctx.violations,
+      agents: ctx.trace, events: ctx.events.map(({ topic, from }) => ({ topic, from })),
       profile: structuredClone(p), summary: describe(p), ms: Date.now() - started,
     };
 
@@ -169,31 +162,50 @@ export class Engine {
     this.store.append("messages", sessionId, { id: newId("msg"), role: "user", text, at: now(), clientMsgId: clientMsgId || null });
     this.store.append("messages", sessionId, { id: newId("msg"), role: "assistant", text: reply.text, at: now(), meta: { turn: out } });
     this.store.update("sessions", sessionId, (s) => { s.lastAt = now(); s.turns += 1; if (s.title === "New chat") s.title = text.slice(0, 60); });
-    if (changes.length) this.store.append("events", u.id, { at: now(), type: "profile", sessionId, text, changes: changes.map((c) => c.label), source: ex.source });
+    if (changes.length) this.store.append("events", u.id, { at: now(), type: "profile", sessionId, text, changes: changes.map((c) => c.label), source: extraction.source });
+    if (ctx.violations.length) this.store.append("events", u.id, { at: now(), type: "promise", sessionId, changes: ctx.violations.map((v) => `Pulled ${v.title}: ${v.problems.join(", ")}`), source: "promises agent" });
     return out;
   }
 
-  #resolveCar(p, q) {
-    const shown = p.lastShown || [];
-    let id = null;
-    if (q.listingRef && shown[q.listingRef - 1]) id = shown[q.listingRef - 1].id;
-    if (!id && q.model) id = shown.find((c) => c.model?.toLowerCase() === q.model.toLowerCase())?.id;
-    if (!id && !q.model && shown[0]) id = shown[0].id;
-    if (id) return inventory().cars.find((c) => c.id === id) || null;
-    if (!q.model) return null;
-    const home = findCity(p.homeCity);
-    const matches = inventory().cars.filter((c) => c.model?.toLowerCase() === q.model.toLowerCase());
-    return matches.find((c) => home && c.citySlug === home.slug) || matches[0] || null;
+  // ---------- intent outside chat ----------
+  // Every remembered intent, ranked newest-and-strongest first.
+  priorities(userId) { const u = this.user(userId); return this.ledger.priorities(u.id, u.profile); }
+
+  // The app's "Recommended for you" feed, ranked with the same recency weights as chat.
+  feed(userId) { const u = this.user(userId); return feedFor(u.profile, 12, { weights: recencyWeights(this.ledger.priorities(u.id, u.profile)) }); }
+
+  // App signals keep intent current between chats. "dismiss" hides a listing everywhere (a promise);
+  // "view" / "shortlist" is interest in that model, recorded and ranked but never made a filter.
+  recordSignal(userId, { type, carId } = {}) {
+    const u = this.user(userId);
+    if (!SIGNALS.includes(type)) throw new AppError(400, "bad_signal", `type must be one of ${SIGNALS.join(", ")}`);
+    const car = inventory().cars.find((c) => c.id === carId);
+    if (!car) throw new AppError(404, "car_not_found", "Listing not found");
+    const p = u.profile;
+    let label;
+    if (type === "dismiss") {
+      if (!p.rejectedIds.includes(car.id)) p.rejectedIds.push(car.id);
+      p.lastShown = (p.lastShown || []).filter((s) => s.id !== car.id);
+      this.ledger.record(u.id, [{ key: `rejectedIds:${car.id}`, field: "rejectedIds", value: car.id, op: "state" }], { source: "app" });
+      label = `Hid ${car.year} ${car.make} ${car.model} (${car.city})`;
+    } else {
+      this.ledger.record(u.id, [{ key: `interest:${car.model}`, field: "interest", value: car.model, op: "interest" }], { source: "app" });
+      label = `${type === "view" ? "Viewed" : "Shortlisted"} ${car.year} ${car.make} ${car.model}`;
+    }
+    p.updatedAt = now();
+    this.store.update("users", u.id, (x) => { x.profile = p; });
+    this.store.append("events", u.id, { at: now(), type: "signal", changes: [label], source: "app" });
+    return { ok: true, label, priorities: this.ledger.priorities(u.id, p) };
   }
 
-  #raiseTicket(u, sessionId, { call, question }) {
-    const open = this.store.list("tickets", (t) => t.userId === u.id && t.status === "open")[0];
-    const questions = [...new Set([...(open?.questions || []), ...(question ? [question] : [])])];
-    const shortlist = (u.profile.lastShown || []).map((s) => inventory().cars.find((c) => c.id === s.id)).filter(Boolean);
-    const packet = contextPacket(u, { openQuestions: questions, shortlist, sessionCount: this.sessionsOf(u.id).length });
-    if (open) return this.store.update("tickets", open.id, (t) => { t.callRequested = t.callRequested || call; t.questions = questions; t.packet = packet; t.updates.push({ at: now(), text: call ? "Buyer asked for a call" : `Question: ${question}` }); });
-    const t = { id: newId("tkt"), userId: u.id, sessionId, status: "open", callRequested: call, questions, packet, createdAt: now(), updates: [{ at: now(), text: call ? "Buyer asked for a call" : `Async review: ${question}` }] };
-    return this.store.put("tickets", t.id, t);
+  // The buyer removes one remembered item from the "What CarGPT remembers" panel.
+  forget(userId, field, value) {
+    const u = this.user(userId);
+    if (!forget(u.profile, field, value)) throw new AppError(400, "nothing_to_forget", "Nothing to remove");
+    this.ledger.record(u.id, [{ key: `forget:${field}:${value ?? ""}`, field: "forget", value: `${field}${value ? `:${value}` : ""}`, op: "clear" }], { source: "buyer" });
+    this.store.update("users", u.id, (x) => { x.profile = u.profile; });
+    this.store.append("events", u.id, { at: now(), type: "forget", changes: [`Removed ${field}${value ? `: ${value}` : ""}`], source: "buyer" });
+    return { profile: u.profile, summary: describe(u.profile), priorities: this.ledger.priorities(u.id, u.profile) };
   }
 
   closeTicket(ticketId, note) {

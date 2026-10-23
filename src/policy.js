@@ -19,8 +19,8 @@ export function commitmentsFor(changes) {
 }
 
 // The app's "Recommended for you" feed. Same profile, same filters as the chat.
-export function feedFor(profile, limit = 12) {
-  const r = search(profile);
+export function feedFor(profile, limit = 12, { weights } = {}) {
+  const r = search(profile, { weights });
   const cars = r.shown.slice(0, limit);
   return { cars, rules: describe(profile), excluded: { brands: profile.rejectBrands, models: profile.rejectModels, bodies: profile.excludeBodies } };
 }
@@ -42,11 +42,14 @@ export function escalationDecision(p, { unresolved, openTicket, askedNow }) {
   return { escalate: false, ask: true, reason: "Ask first: “Want an advisor to call, or should I keep it here?”" };
 }
 
-export function contextPacket(user, { openQuestions, shortlist, sessionCount }) {
+export function contextPacket(user, { openQuestions, shortlist, sessionCount, priorities = [] }) {
   const p = user.profile;
   return {
     buyer: user.name, city: p.homeCity, sessions: sessionCount,
     intent: describe(p),
+    // What the buyer wants now, newest first, so the advisor opens with the current ask, not an old one.
+    latest: priorities.filter((x) => x.kind !== "constraint" && x.status !== "dormant").slice(0, 5).map((x) => `${x.label}${x.turnsAgo === 0 ? " (just now)" : x.turnsAgo ? ` (${x.turnsAgo} turn${x.turnsAgo === 1 ? "" : "s"} ago)` : ""}`),
+    dormant: priorities.filter((x) => x.status === "dormant").map((x) => x.label),
     blocked: [...p.rejectBrands, ...p.rejectModels, ...p.excludeBodies.map((b) => `${b}s`)],
     shortlist: shortlist.slice(0, 5).map((c) => ({ id: c.id, title: `${c.year} ${c.make} ${c.model}`, price: lakh(c.priceLakh), city: c.city, url: c.url })),
     openQuestions,

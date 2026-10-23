@@ -1,6 +1,6 @@
 // JSON-file store with an in-memory cache.
 //
-// Every collection (users, sessions, messages, tickets, events, llm cache) is held in memory and
+// Every collection (users, sessions, messages, tickets, events, intent ledger, llm cache) is held in memory and
 // written back to data/store/<name>.json. Writes are debounced and atomic (write a temp file, then
 // rename), so a crash mid-write never leaves a half-written file. Swap this module for Postgres or
 // Redis in production; the rest of the app only uses get / put / list / update / append.
@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "
 import { randomUUID, randomBytes } from "node:crypto";
 import { config } from "./config.js";
 
-const COLLECTIONS = ["users", "sessions", "messages", "tickets", "events", "llmcache"];
+const COLLECTIONS = ["users", "sessions", "messages", "tickets", "events", "intents", "llmcache"];
 const FLUSH_MS = 150;
 
 export class Store {

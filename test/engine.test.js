@@ -70,11 +70,56 @@ test("intent accumulates across messages: brand + budget + no hatchbacks", async
   assert.ok(!shown(last).some((c) => c.model === "X1" && c.city === "Kanpur"), "₹31.88L X1 is over budget");
 });
 
-test("a 200 km radius reaches Lucknow stock; beyond-radius stock is named, not hidden", async () => {
-  const { outs } = await chat(["Show me BMW under 20 lakhs", "search within 200km"]);
-  assert.ok(outs[0].search.beyond.some((b) => b.city === "Lucknow"), "Lucknow is beyond 50 km and is pointed out");
-  const near = outs[1].search.steps.find((s) => s.key === "nearby");
-  assert.ok(near.cars.some((c) => c.city === "Lucknow" && c.make === "BMW"));
+test("without a stated radius the search widens on its own until it finds the cars (Kanpur → Lucknow)", async () => {
+  const { last } = await chat(["Show me BMW under 20 lakhs"]);
+  assert.equal(last.search.radiusMode, "auto");
+  const near = last.search.steps.find((s) => s.key === "nearby");
+  assert.ok(near.cars.some((c) => c.city === "Lucknow" && c.make === "BMW"), "Lucknow BMW found without asking for a radius");
+});
+
+test("a radius the buyer states is used exactly; stock beyond it is named, not hidden", async () => {
+  const { last } = await chat(["Show me BMW under 20 lakhs within 30 km"]);
+  assert.equal(last.search.radiusMode, "stated");
+  assert.equal(last.search.radiusKm, 30);
+  assert.ok(!last.search.steps.flatMap((s) => s.cars).some((c) => c.city === "Lucknow"));
+  assert.ok(last.search.beyond.some((b) => b.city === "Lucknow"));
+});
+
+const LUCKNOW_GPS = { lat: 26.85, lon: 80.95, accuracy: 30 };
+
+test("GPS sets where the search starts: a Kanpur buyer standing in Lucknow sees Lucknow first", async () => {
+  const engine = memEngine();
+  const u = engine.createUser({ name: "Traveller", homeCity: "kanpur" });
+  const { session } = engine.createSession(u.id);
+  const r = await engine.handleMessage(u.id, session.id, "any Audi near me?", { location: LUCKNOW_GPS });
+  assert.equal(r.search.origin.source, "gps");
+  assert.equal(r.search.home.name, "Lucknow");
+  assert.ok(r.search.steps[0].cars.every((c) => c.city === "Lucknow" && c.make === "Audi"));
+  assert.equal(r.profile.homeCity, "Kanpur", "home city (for RTO rules) does not move with GPS");
+});
+
+test("signing up with only a GPS fix picks the nearest Cars24 city as home", () => {
+  const engine = memEngine();
+  const u = engine.createUser({ name: "Gps Only", location: LUCKNOW_GPS });
+  assert.equal(u.profile.homeCity, "Lucknow");
+  assert.equal(u.profile.location.city, "Lucknow");
+  assert.throws(() => engine.createUser({ name: "Bad", location: { lat: "x", lon: 1 } }), /lat and lon/);
+});
+
+test("a city named in the message anchors that turn's search", async () => {
+  const { last } = await chat(["Do we have any audi in lucknow?"]);
+  assert.equal(last.search.home.name, "Lucknow");
+  assert.ok(last.search.steps[0].cars.some((c) => c.make === "Audi" && c.city === "Lucknow"));
+});
+
+test("a stale GPS fix (over 6 hours) falls back to the home city", async () => {
+  const engine = memEngine();
+  const u = engine.createUser({ name: "Old Fix", homeCity: "kanpur", location: LUCKNOW_GPS });
+  u.profile.location.at = new Date(Date.now() - 7 * 3600 * 1000).toISOString();
+  const { session } = engine.createSession(u.id);
+  const r = await engine.handleMessage(u.id, session.id, "Show me Audi");
+  assert.equal(r.search.origin.source, "city");
+  assert.equal(r.search.home.name, "Kanpur");
 });
 
 // ---------- rule answers ----------
@@ -287,4 +332,51 @@ test("reply guard blocks ‘no cars available’ when no search ran this turn", 
   const facts = { buyerMessage: "transfer?", profile: "", answers: [], cars: [], searchRan: false, escalation: { call: false } };
   assert.ok(guard("There are no Mercedes cars available within 50 km.", facts).length);
   assert.deepEqual(guard("Same-state transfer: no NOC needed.", facts), []);
+});
+
+test("on-road question names a model by its first word (“the GLC” for “GLC Class”)", async () => {
+  const { setInventory, inventory } = await import("../src/inventory.js");
+  const saved = inventory();
+  setInventory({ cars: saved.cars.map((c) => (c.model === "GLC" ? { ...c, model: "GLC Class" } : c)), cities: saved.cities });
+  try {
+    const { last } = await chat(["Show me Audi within 200 km", "What's the onroad cost of the GLC including transfer"]);
+    assert.equal(last.answers[0].car.make, "Mercedes-Benz");
+    assert.equal(last.answers[0].car.priceLakh, 15.5);
+  } finally { setInventory({ cars: saved.cars, cities: saved.cities }); }
+});
+
+test("the LLM can't move the buyer's home city unless the message names it", async () => {
+  await withLLM(okLLM({ ...normalise({}), intent: "question", homeCity: "new delhi", onRoad: { model: "GLC", listingRef: null } }), async (engine) => {
+    const { last } = await chat(["What's the onroad cost of the GLC including transfer"], { engine });
+    assert.equal(last.profile.homeCity, "Kanpur");
+  });
+  await withLLM(okLLM({ ...normalise({}), intent: "preference", homeCity: "lucknow" }), async (engine) => {
+    const { last } = await chat(["I've moved to Lucknow now"], { engine });
+    assert.equal(last.profile.homeCity, "Lucknow");
+  });
+});
+
+test("a brand the LLM carries over from context can't unblock a blocked brand", async () => {
+  let call = 0;
+  const llm = async () => {
+    call++;
+    const d = call === 1
+      ? { ...normalise({}), intent: "search", brands: ["Mercedes-Benz"], rejectBrands: ["Maruti"] }
+      : { ...normalise({}), intent: "preference", brands: ["Maruti", "Mercedes-Benz"], excludeBodies: ["Hatchback"] };
+    return { ok: true, status: 200, json: async () => ({ model: "t", usage: {}, choices: [{ message: { content: JSON.stringify(d) } }] }) };
+  };
+  await withLLM(llm, async (engine) => {
+    const { last } = await chat(["I searched Mercedes, why am I seeing Maruti Baleno?", "please don't show me any hatchback in recommendations"], { engine });
+    assert.deepEqual(last.profile.rejectBrands, ["Maruti"]);
+    assert.ok(!last.profile.brands.includes("Maruti"));
+    assert.ok(last.search.steps.flatMap((s) => s.cars).every((c) => c.make !== "Maruti"));
+  });
+});
+
+test("“near me” keeps the radius automatic even if the LLM invents one", async () => {
+  await withLLM(okLLM({ ...normalise({}), intent: "search", includeBodies: ["SUV"], radiusKm: 50, useCurrentLocation: true }), async (engine) => {
+    const { last } = await chat(["any SUV near me?"], { engine });
+    assert.equal(last.profile.radiusSource, "auto");
+    assert.equal(last.search.radiusMode, "auto");
+  });
 });

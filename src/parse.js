@@ -4,7 +4,7 @@ import { inventory } from "./inventory.js";
 import { CITY_STATE, LUXURY_BRANDS } from "./rules.js";
 import { emptyDelta } from "./intent.js";
 
-const BRAND_ALIASES = {
+export const BRAND_ALIASES = {
   "Mercedes-Benz": ["mercedes", "merc", "benz"], BMW: ["bmw"], Maruti: ["maruti", "suzuki"], Volkswagen: ["volkswagen", "vw"],
   "Land Rover": ["land rover", "range rover"], Hyundai: ["hyundai", "hundai"], Mahindra: ["mahindra"], Toyota: ["toyota"],
 };
@@ -16,7 +16,7 @@ const FUEL_WORDS = { Petrol: ["petrol"], Diesel: ["diesel"], CNG: ["cng"], Elect
 export const NEG = /(why am i seeing|why are you showing|recommending me|instead of|don'?t want|do not want|not interested|stop showing|no more|don'?t show|do not show|never show|hate|nahi chahiye|mat dikhao|without)/;
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const has = (t, w) => new RegExp(`(^|[^a-z0-9])${esc(w)}([^a-z0-9]|$)`).test(t);
+export const has = (t, w) => new RegExp(`(^|[^a-z0-9])${esc(w)}([^a-z0-9]|$)`).test(t);
 
 function brandKeys() {
   const out = {};
@@ -97,7 +97,12 @@ export function parse(text) {
     const ref = t.match(/\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\b/);
     const idx = ref ? ["first", "second", "third", "fourth", "fifth"].indexOf(ref[1].replace(/(st|nd|rd|th)$/, "")) : -1;
     const n = ref && /^\d/.test(ref[1]) ? parseInt(ref[1], 10) : idx + 1;
-    d.onRoad = { model: d.models[0] || null, listingRef: ref ? n : null };
+    // Buyers name a model by its first word ("the GLC" for "GLC Class"), so match that too.
+    const named = d.models[0] || inventory().vocab.models.find(({ model }) => {
+      const head = model.toLowerCase().split(" ")[0];
+      return head.length >= 3 && !AMBIGUOUS_MODELS.has(head) && has(t, head);
+    })?.model;
+    d.onRoad = { model: named || null, listingRef: ref ? n : null };
   }
   const reg = t.match(/\b([a-z]{2})\s?-?(\d{2})\b/);
   if (!d.onRoad && /transfer|noc|\brc\b|registration|registered|re-?register/.test(t)) {

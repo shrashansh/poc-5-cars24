@@ -98,6 +98,12 @@ details.steps summary { cursor: pointer; font-weight: 600; font-size: .88rem }
 
 .mem { display: flex; flex-wrap: wrap; gap: 5px }
 .mem .chip { display: inline-flex; gap: 5px; align-items: center; color: var(--fg) }
+.prio { display: grid; gap: 3px; margin-top: 6px; font-size: .8rem }
+.prio div { display: grid; grid-template-columns: 1fr 56px 64px; gap: 6px; align-items: center }
+.prio .bar { height: 5px; border-radius: 99px; background: var(--brand) }
+.prio .dormant { opacity: .5 }
+.agents { font-size: .76rem; color: var(--muted); margin-top: 4px }
+.agents b { color: var(--fg); font-weight: 600 }
 .mem .chip.neg { background: var(--bad-soft); border-color: transparent }
 .mem .chip button { border: 0; background: transparent; cursor: pointer; padding: 0 2px; color: var(--muted); font-weight: 700 }
 .feed { display: grid; gap: 6px }
@@ -136,7 +142,7 @@ details.steps summary { cursor: pointer; font-weight: 600; font-size: .88rem }
       <button class="btn" id="newUserBtn">+ New buyer</button>
       <form class="new-user" id="newUserForm" hidden>
         <input type="text" name="name" placeholder="Name" required maxlength="60">
-        <select name="homeCity" id="citySelect" required></select>
+        <select name="homeCity" id="citySelect" aria-label="City"></select>
         <div class="row"><button class="btn primary">Create</button><button class="btn" type="button" id="cancelNewUser">Cancel</button></div>
       </form>
     </div>
@@ -152,7 +158,10 @@ details.steps summary { cursor: pointer; font-weight: 600; font-size: .88rem }
       <div class="sugg" id="sugg"></div>
       <form id="composer">
         <textarea id="input" placeholder="Ask about any car, budget, city, RC transfer…" maxlength="1000" aria-label="Message"></textarea>
-        <button class="btn primary" id="sendBtn">Send</button>
+        <div class="row" style="flex-direction:column;align-items:stretch;gap:6px">
+          <button class="btn" type="button" id="locBtn" title="Search from where you are">📍 Use my location</button>
+          <button class="btn primary" id="sendBtn">Send</button>
+        </div>
       </form>
     </div>
   </section>
@@ -162,6 +171,9 @@ details.steps summary { cursor: pointer; font-weight: 600; font-size: .88rem }
       <div class="eyebrow">What CarGPT remembers</div>
       <p class="muted" style="margin:0;font-size:.82rem">Shared by every chat, the app feed, the advisor and the dialer. Tap × to forget.</p>
       <div class="mem" id="memory"></div>
+      <div class="eyebrow" style="margin-top:10px">Ranked by recency</div>
+      <p class="muted" style="margin:0;font-size:.82rem">Newest intent first. Preferences fade if not repeated; promises never do.</p>
+      <div class="prio" id="prio"></div>
     </div>
     <div class="panel">
       <div class="eyebrow">App feed: “Recommended for you”</div>
@@ -192,7 +204,30 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const setHTML = (el, html) => el.replaceChildren(document.createRange().createContextualFragment(html));
 const ls = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const state = { users: [], tokens: ls.get("tokens") || {}, userId: ls.get("userId"), sessionId: null, busy: false };
+const state = { users: [], tokens: ls.get("tokens") || {}, userId: ls.get("userId"), sessionId: null, busy: false, gps: null };
+
+// ---------- location ----------
+// The browser's GPS fix is the search origin. It is sent with every message and refreshed when stale.
+function readGPS() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error("This browser can't share location"));
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy, at: Date.now() }),
+      (err) => reject(new Error(err.code === 1 ? "Location permission denied; using your city instead" : "Couldn't get your location")),
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60 * 1000 });
+  });
+}
+async function shareLocation({ quiet = false } = {}) {
+  try {
+    state.gps = await readGPS();
+    if (state.userId) {
+      const r = await api(`/api/users/${state.userId}/location`, { method: "POST", body: state.gps });
+      $("#locBtn").textContent = `📍 near ${r.location.city}`;
+      await refreshSide();
+    }
+  } catch (e) { if (!quiet) toast(e.message); }
+}
+const freshGPS = () => (state.gps && Date.now() - state.gps.at < 10 * 60 * 1000 ? state.gps : null);
 const when = (iso) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2600); }
@@ -214,7 +249,7 @@ async function boot() {
   $("#llmBadge").textContent = h.llm ? `LLM: ${h.model}` : "LLM off: rules";
   $("#llmBadge").className = `badge ${h.llm ? "on" : "off"}`;
   const cities = await api("/api/cities");
-  setHTML($("#citySelect"), cities.map((c) => `<option value="${esc(c.slug)}">${esc(c.name)} · ${esc(c.totalListed ?? "?")} cars</option>`).join(""));
+  setHTML($("#citySelect"), `<option value="">📍 Detect with GPS</option>` + cities.map((c) => `<option value="${esc(c.slug)}">${esc(c.name)} · ${esc(c.totalListed ?? "?")} cars</option>`).join(""));
   await loadUsers();
 }
 
@@ -233,6 +268,9 @@ async function selectUser(id) {
   if (!id) { setHTML($("#thread"), `<p class="empty">Create a buyer to start.</p>`); return; }
   await loadSessions();
   await refreshSide();
+  // Start from where the buyer is: ask once, silently fall back to their city if they decline.
+  if (!state.askedGPS) { state.askedGPS = true; shareLocation({ quiet: true }); }
+  else if (state.gps) shareLocation({ quiet: true });
 }
 
 function renderSessions(sessions) {
@@ -298,6 +336,12 @@ function turnExtras(t) {
     if (s.withheld) h += `<p class="beyond">${esc(s.withheld)} cars from other segments withheld.</p>`;
     h += `</details>`;
   }
+  if (t.agents?.length) {
+    const ran = t.agents.filter((a) => a.status !== "skipped" && a.status !== "reacted");
+    h += `<details class="agents"><summary>${esc(ran.length)} agents · ${esc(ran.map((a) => a.agent + (a.status === "failed" ? " ✗" : "")).join(" → "))}</summary>`;
+    h += t.agents.map((a) => `<div><b>${esc(a.agent)}</b> ${esc(a.status)}${a.topic ? ` to ${esc(a.topic)}` : ""}${a.ms !== undefined ? ` · ${esc(a.ms)} ms` : ""}${a.note ? ` · ${esc(a.note)}` : ""}${a.error ? ` · ${esc(a.error)}` : ""}</div>`).join("");
+    h += `</details>`;
+  }
   if (t.escalation && (t.escalation.escalate || t.escalation.ask)) h += `<div class="esc ${t.escalation.call ? "call" : ""}">${esc(t.escalation.reason)}${t.escalation.ticketId ? ` · ticket <span class="mono">${esc(t.escalation.ticketId)}</span>` : ""}</div>`;
   return h;
 }
@@ -318,9 +362,12 @@ const MEM_FIELDS = [
 ];
 async function refreshSide() {
   if (!state.userId) return;
-  const [{ profile: p, events }, feed] = await Promise.all([api(`/api/users/${state.userId}/profile`), api(`/api/users/${state.userId}/feed`)]);
+  const [{ profile: p, events, priorities = [] }, feed] = await Promise.all([api(`/api/users/${state.userId}/profile`), api(`/api/users/${state.userId}/feed`)]);
   const x = (f, v) => `<button data-f="${esc(f)}" ${v !== undefined ? `data-v="${esc(v)}"` : ""} aria-label="Forget">×</button>`;
-  const chips = [`<span class="chip">📍 ${esc(p.homeCity)} · ${esc(p.radiusKm)} km${p.radiusKm !== 50 ? " " + x("radiusKm") : ""}</span>`];
+  const where = p.location?.source === "gps" ? `near ${esc(p.location.city)} (GPS)` : esc(p.homeCity);
+  const radius = p.radiusSource === "stated" ? `${esc(p.radiusKm)} km ${x("radiusKm")}` : "auto radius";
+  const chips = [`<span class="chip">📍 ${where} · ${radius}</span>`];
+  if (p.location?.source === "gps" && p.homeCity !== p.location.city) chips.push(`<span class="chip">home: ${esc(p.homeCity)}</span>`);
   for (const [f, pre, neg] of MEM_FIELDS) for (const v of p[f]) chips.push(`<span class="chip ${neg ? "neg" : ""}">${pre}${esc(v)} ${x(f, v)}</span>`);
   if (p.budgetMax) chips.push(`<span class="chip">≤ ₹${esc(p.budgetMax)}L ${x("budgetMax")}</span>`);
   if (p.budgetMin) chips.push(`<span class="chip">≥ ₹${esc(p.budgetMin)}L ${x("budgetMin")}</span>`);
@@ -330,12 +377,13 @@ async function refreshSide() {
   if (p.widened) chips.push(`<span class="chip">open to other brands ${x("widened")}</span>`);
   chips.push(`<span class="chip ${p.callConsent === false ? "neg" : ""}">${p.callConsent === false ? "🔕 no calls" : p.callConsent ? "📞 call requested" : "calls: not asked"}${p.callConsent !== null ? " " + x("callConsent") : ""}</span>`);
   setHTML($("#memory"), chips.join(""));
+  setHTML($("#prio"), priorities.slice(0, 10).map((x) => `<div class="${x.status === "dormant" ? "dormant" : ""}"><span>${esc(x.label)} <span class="muted">${esc(x.status)}</span></span><span class="bar" style="width:${Math.round(56 * x.weight)}px"></span><span class="muted mono">${x.turnsAgo === 0 ? "now" : x.turnsAgo === null || x.lastSeenTurn === null ? "earlier" : esc(x.turnsAgo) + " turns"}</span></div>`).join("") || `<p class="empty">Nothing yet.</p>`);
   setHTML($("#feed"), feed.cars.length ? feed.cars.slice(0, 8).map((c) => `<a href="${esc(c.url || "#")}" target="_blank" rel="noopener"><span>${esc(c.title)} · ${esc(c.city)}</span><b class="mono">₹${esc(c.priceLakh)}L</b></a>`).join("") : `<p class="empty">Nothing yet. Tell CarGPT what you want.</p>`);
   setHTML($("#log"), events.slice().reverse().slice(0, 25).map((e) => `<div><span class="muted mono">${esc(new Date(e.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }))}</span> ${esc((e.changes || [e.detail]).join(" · "))}${e.source ? ` <span class="muted">(${esc(e.source)})</span>` : ""}</div>`).join("") || `<p class="empty">No activity yet.</p>`);
 }
 
 const SUGGESTIONS = [
-  "Show me Mercedes in my city", "BMW under 20 lakhs near me", "Search within 200 km", "No hatchbacks please",
+  "Any SUV near me?", "Show me Mercedes in my city", "BMW under 20 lakhs near me", "Search within 200 km", "No hatchbacks please",
   "Creta ya Seltos chahiye 12 lakh tak, automatic", "I'm buying a UP78 car and live in Delhi, transfer process?",
   "What's the on-road cost of the first one?", "Don't call me, just answer here", "Have an advisor call me", "Start over",
 ];
@@ -353,8 +401,10 @@ async function send(text) {
   const path = `/api/users/${state.userId}/sessions/${state.sessionId}/messages`;
   try {
     let r;
-    try { r = await api(path, { method: "POST", body: { text, clientMsgId } }); }
-    catch (e) { if (/fetch|network/i.test(e.message)) r = await api(path, { method: "POST", body: { text, clientMsgId } }); else throw e; }
+    if (!freshGPS() && state.gps) await readGPS().then((g) => (state.gps = g)).catch(() => {});
+    const body = { text, clientMsgId, ...(freshGPS() ? { location: freshGPS() } : {}) };
+    try { r = await api(path, { method: "POST", body }); }
+    catch (e) { if (/fetch|network/i.test(e.message)) r = await api(path, { method: "POST", body }); else throw e; }
     typing.remove();
     appendMsg("bot", r.reply, r);
     renderSessions(await api(`/api/users/${state.userId}/sessions`));
@@ -363,6 +413,7 @@ async function send(text) {
   finally { state.busy = false; $("#sendBtn").disabled = false; $("#input").focus(); }
 }
 
+$("#locBtn").addEventListener("click", () => shareLocation());
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); send($("#input").value); });
 $("#input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("#input").value); } });
 $("#sugg").addEventListener("click", (e) => { if (e.target.tagName === "BUTTON") send(e.target.textContent); });
@@ -375,7 +426,10 @@ $("#newUserForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
   try {
-    const r = await api("/api/users", { method: "POST", body: { name: f.elements.name.value, homeCity: f.elements.homeCity.value } });
+    const body = { name: f.elements.name.value };
+    if (f.elements.homeCity.value) body.homeCity = f.elements.homeCity.value;
+    else { state.gps = await readGPS(); body.location = state.gps; }
+    const r = await api("/api/users", { method: "POST", body });
     state.tokens[r.user.id] = r.token; ls.set("tokens", state.tokens);
     state.userId = r.user.id; f.reset(); f.hidden = true;
     await loadUsers();

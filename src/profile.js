@@ -13,7 +13,8 @@ export function newProfile(homeCity) {
   return {
     homeCity: city ? city.name : homeCity ? CAP(homeCity) : null,
     brands: [], models: [], focus: [], tier: null,
-    budgetMin: null, budgetMax: null, radiusKm: config.defaultRadiusKm, cities: [],
+    budgetMin: null, budgetMax: null, radiusKm: config.defaultRadiusKm, radiusSource: "auto", cities: [],
+    location: null, // last GPS fix: {lat, lon, accuracyM, source, at, city, cityKm}
     includeBodies: [], excludeBodies: [], fuels: [], excludeFuels: [], transmission: null, yearMin: null, kmMax: null,
     rejectBrands: [], rejectModels: [], rejectedIds: [], widened: false,
     callConsent: null, callConsentAt: null,
@@ -36,13 +37,13 @@ export function merge(p, d) {
   const note = (field, op, value, label) => ch.push({ field, op, value, label });
 
   for (const c of d.clear) {
-    if (c === "all") { const keep = { homeCity: p.homeCity, callConsent: p.callConsent, callConsentAt: p.callConsentAt }; Object.assign(p, newProfile(p.homeCity), keep); note("all", "clear", null, "Started a fresh search (kept your city and call preference)"); }
+    if (c === "all") { const keep = { homeCity: p.homeCity, location: p.location, callConsent: p.callConsent, callConsentAt: p.callConsentAt }; Object.assign(p, newProfile(p.homeCity), keep); note("all", "clear", null, "Started a fresh search (kept your city and call preference)"); }
     if (c === "budget" && (p.budgetMax || p.budgetMin)) { p.budgetMax = p.budgetMin = null; note("budget", "clear", null, "Budget removed"); }
     if (c === "brands" && p.brands.length) { p.brands = []; p.models = []; p.focus = []; note("brands", "clear", null, "Brands removed"); }
     if (c === "models" && p.models.length) { p.models = []; note("models", "clear", null, "Models removed"); }
     if (c === "bodies" && (p.excludeBodies.length || p.includeBodies.length)) { p.excludeBodies = []; p.includeBodies = []; note("bodies", "clear", null, "Body-type filters removed"); }
     if (c === "cities" && p.cities.length) { p.cities = []; note("cities", "clear", null, "Extra cities removed"); }
-    if (c === "radius") { p.radiusKm = config.defaultRadiusKm; note("radius", "clear", config.defaultRadiusKm, `Radius back to ${config.defaultRadiusKm} km`); }
+    if (c === "radius") { p.radiusKm = config.defaultRadiusKm; p.radiusSource = "auto"; note("radius", "clear", null, "Radius back to automatic"); }
     if (c === "fuels") { p.fuels = []; p.excludeFuels = []; note("fuels", "clear", null, "Fuel filters removed"); }
     if (c === "transmission" && p.transmission) { p.transmission = null; note("transmission", "clear", null, "Transmission filter removed"); }
     if (c === "year" && p.yearMin) { p.yearMin = null; note("year", "clear", null, "Year filter removed"); }
@@ -70,7 +71,7 @@ export function merge(p, d) {
 
   if (d.budgetMax && d.budgetMax !== p.budgetMax) { p.budgetMax = d.budgetMax; note("budgetMax", "set", d.budgetMax, `Budget up to ${lakh(d.budgetMax)}`); }
   if (d.budgetMin && d.budgetMin !== p.budgetMin) { p.budgetMin = d.budgetMin; note("budgetMin", "set", d.budgetMin, `Budget from ${lakh(d.budgetMin)}`); }
-  if (d.radiusKm && d.radiusKm !== p.radiusKm) { p.radiusKm = d.radiusKm; note("radiusKm", "set", d.radiusKm, `Search radius ${d.radiusKm} km`); }
+  if (d.radiusKm && (d.radiusKm !== p.radiusKm || p.radiusSource !== "stated")) { p.radiusKm = d.radiusKm; p.radiusSource = "stated"; note("radiusKm", "set", d.radiusKm, `Search radius ${d.radiusKm} km`); }
   for (const c of d.cities) {
     const name = cityName(c);
     if (name !== p.homeCity && (!d.transfer || d.transfer.toCity !== c) && CITY_STATE[c] !== undefined && add(p.cities, name)) note("cities", "add", name, `Also search ${name}`);
@@ -96,7 +97,8 @@ export function forget(p, field, value) {
   const arrays = ["brands", "models", "cities", "includeBodies", "excludeBodies", "fuels", "excludeFuels", "rejectBrands", "rejectModels", "rejectedIds"];
   if (arrays.includes(field)) { const ok = drop(p[field], value); if (field === "brands") { drop(p.focus, value); p.tier = tierFor(p.brands); } return ok; }
   if (["budgetMax", "budgetMin", "transmission", "yearMin", "kmMax"].includes(field)) { const ok = p[field] !== null; p[field] = null; return ok; }
-  if (field === "radiusKm") { p.radiusKm = config.defaultRadiusKm; return true; }
+  if (field === "radiusKm") { p.radiusKm = config.defaultRadiusKm; p.radiusSource = "auto"; return true; }
+  if (field === "location") { const ok = Boolean(p.location); p.location = null; return ok; }
   if (field === "widened") { p.widened = false; return true; }
   if (field === "callConsent") { p.callConsent = null; p.callConsentAt = new Date().toISOString(); return true; }
   return false;
@@ -113,6 +115,7 @@ export function describe(p) {
   if (p.fuels.length) parts.push(p.fuels.join("/"));
   if (p.transmission) parts.push(p.transmission.toLowerCase());
   if (p.yearMin) parts.push(`${p.yearMin}+`);
-  parts.push(`within ${p.radiusKm} km of ${p.homeCity || "?"}${p.cities.length ? ` + ${p.cities.join(", ")}` : ""}`);
+  const from = p.location?.source === "gps" && p.location.city ? `you (near ${p.location.city})` : p.homeCity || "?";
+  parts.push(`${p.radiusSource === "stated" ? `within ${p.radiusKm} km` : "nearest first"} of ${from}${p.cities.length ? ` + ${p.cities.join(", ")}` : ""}`);
   return parts.join(", ");
 }

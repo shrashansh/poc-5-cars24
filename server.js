@@ -8,8 +8,8 @@ import { timingSafeEqual } from "node:crypto";
 import { config, llmEnabled } from "./src/config.js";
 import { loadInventory, inventory } from "./src/inventory.js";
 import { Engine, AppError } from "./src/engine.js";
-import { feedFor, dialerCheck } from "./src/policy.js";
-import { forget, describe } from "./src/profile.js";
+import { dialerCheck } from "./src/policy.js";
+import { describe } from "./src/profile.js";
 
 const safeEq = (a, b) => { const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || "")); return x.length === y.length && timingSafeEqual(x, y); };
 
@@ -28,7 +28,7 @@ export function createApp({ engine = new Engine() } = {}) {
   const now = () => new Date().toISOString();
 
   // ---- public ----
-  on("GET", "/api/health", () => ({ ok: true, llm: llmEnabled(), model: llmEnabled() ? config.openaiModel : null, cars: inventory().cars.length, cities: inventory().cities.length, capturedAt: inventory().capturedAt }));
+  on("GET", "/api/health", () => ({ ok: true, agents: engine.coordinator.schedule, llm: llmEnabled(), model: llmEnabled() ? config.openaiModel : null, cars: inventory().cars.length, cities: inventory().cities.length, capturedAt: inventory().capturedAt }));
   on("GET", "/api/cities", () => inventory().cities.map(({ slug, name, state, totalListed, captured, luxeCount, assuredServiceable }) => ({ slug, name, state, totalListed, captured, luxeCount, assuredServiceable })));
   on("POST", "/api/users", (req, _p, body) => { const u = engine.createUser(body); return { user: engine.publicUser(u), token: u.token }; });
   // Demo convenience: list users so the web app can switch between them. Tokens only go to the advisor key.
@@ -42,16 +42,14 @@ export function createApp({ engine = new Engine() } = {}) {
   on("GET", "/api/users/:userId/sessions", (req, p) => { buyer(req, p); return engine.sessionsOf(p.userId); });
   on("POST", "/api/users/:userId/sessions", (req, p, body) => { buyer(req, p); return engine.createSession(p.userId, body); });
   on("GET", "/api/users/:userId/sessions/:sessionId/messages", (req, p) => { buyer(req, p); engine.session(p.userId, p.sessionId); return engine.messages(p.sessionId); });
-  on("POST", "/api/users/:userId/sessions/:sessionId/messages", (req, p, body) => { buyer(req, p); return engine.handleMessage(p.userId, p.sessionId, body.text, { clientMsgId: body.clientMsgId }); });
-  on("GET", "/api/users/:userId/profile", (req, p) => { const u = buyer(req, p); return { profile: u.profile, summary: describe(u.profile), events: store.items("events", u.id).slice(-50) }; });
-  on("DELETE", "/api/users/:userId/profile", (req, p, body) => {
-    const u = buyer(req, p);
-    if (!forget(u.profile, body.field, body.value)) throw new AppError(400, "nothing_to_forget", "Nothing to remove");
-    store.update("users", u.id, (x) => { x.profile = u.profile; });
-    store.append("events", u.id, { at: now(), type: "forget", changes: [`Removed ${body.field}${body.value ? `: ${body.value}` : ""}`], source: "buyer" });
-    return { profile: u.profile, summary: describe(u.profile) };
-  });
-  on("GET", "/api/users/:userId/feed", (req, p) => feedFor(buyer(req, p).profile));
+  on("POST", "/api/users/:userId/sessions/:sessionId/messages", (req, p, body) => { buyer(req, p); return engine.handleMessage(p.userId, p.sessionId, body.text, { clientMsgId: body.clientMsgId, location: body.location }); });
+  on("POST", "/api/users/:userId/location", (req, p, body) => { buyer(req, p); return engine.setLocation(p.userId, body); });
+  on("GET", "/api/users/:userId/profile", (req, p) => { const u = buyer(req, p); return { profile: u.profile, summary: describe(u.profile), priorities: engine.priorities(u.id), events: store.items("events", u.id).slice(-50) }; });
+  on("DELETE", "/api/users/:userId/profile", (req, p, body) => { buyer(req, p); return engine.forget(p.userId, body.field, body.value); });
+  on("GET", "/api/users/:userId/feed", (req, p) => { buyer(req, p); return engine.feed(p.userId); });
+  // App taps keep intent current between chats: { type: "view" | "shortlist" | "dismiss", carId }.
+  on("POST", "/api/users/:userId/signals", (req, p, body) => { buyer(req, p); return engine.recordSignal(p.userId, body); });
+  on("GET", "/api/users/:userId/intents", (req, p) => { buyer(req, p); return { priorities: engine.priorities(p.userId), history: engine.ledger.history(p.userId) }; });
 
   // ---- advisor / dialer ----
   on("GET", "/api/advisor/tickets", (req) => { advisor(req); return store.list("tickets").sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((t) => ({ ...t, buyer: store.get("users", t.userId)?.name })); });
@@ -66,7 +64,7 @@ export function createApp({ engine = new Engine() } = {}) {
   on("GET", "/api/advisor/users/:userId", (req, p) => {
     advisor(req);
     const u = engine.user(p.userId);
-    return { user: engine.publicUser(u), events: store.items("events", u.id), sessions: engine.sessionsOf(u.id).map((s) => ({ ...s, messages: engine.messages(s.id).map(({ meta, ...m }) => ({ ...m, source: meta?.turn?.extraction?.source })) })) };
+    return { user: engine.publicUser(u), priorities: engine.priorities(u.id), events: store.items("events", u.id), sessions: engine.sessionsOf(u.id).map((s) => ({ ...s, messages: engine.messages(s.id).map(({ meta, ...m }) => ({ ...m, source: meta?.turn?.extraction?.source })) })) };
   });
 
   return createServer(async (req, res) => {
