@@ -72,7 +72,9 @@ export function canonicalModel(s) {
   if (!s) return null;
   const k = String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const models = inventory().vocab.models;
+  const flat = (x) => x.replace(/[^a-z0-9]+/g, "");
   return models.find((m) => m.model.toLowerCase().replace(/[^a-z0-9]+/g, " ") === k)
+    || models.find((m) => flat(m.model.toLowerCase()) === flat(k))
     || models.find((m) => m.model.toLowerCase().replace(/[^a-z0-9]+/g, " ").startsWith(k + " "))
     || null;
 }

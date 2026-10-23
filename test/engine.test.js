@@ -380,3 +380,31 @@ test("“near me” keeps the radius automatic even if the LLM invents one", asy
     assert.equal(last.search.radiusMode, "auto");
   });
 });
+
+test("real cars24 model names: 'GLC' finds a 'GLC CLASS' listing and on-road never answers for a different car", async () => {
+  const { setInventory, inventory } = await import("../src/inventory.js");
+  const original = inventory();
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/inventory.json", import.meta.url), "utf8"));
+  const cities = JSON.parse(readFileSync(new URL("./fixtures/cities.json", import.meta.url), "utf8")).cities;
+  // cars24 cards say "GLC CLASS", "C CLASS", "XC 60"; the fixture uses the short forms.
+  const cars = fixture.cars.map((c) => ({ ...c, model: c.model === "GLC" ? "GLC CLASS" : c.model === "C-Class" ? "C CLASS" : c.model }));
+  setInventory({ cars, cities });
+  try {
+    assert.ok(parse("what's the onroad cost of the GLC including transfer").onRoad?.model, "GLC is recognised as a model");
+    const { last } = await chat(["Audi please", "What's the onroad cost of the GLC including transfer"]);
+    const a = last.answers.find((x) => x.type === "onroad");
+    assert.ok(a?.resolved, "on-road question is answered");
+    assert.match(a.text, /GLC/, "answer is about the GLC, not the first car on screen");
+  } finally {
+    setInventory({ cars: original.cars, cities: original.cities, capturedAt: original.capturedAt });
+  }
+});
+
+test("“the second one” is the second car shown; a vague on-road question asks which car", async () => {
+  const { last, outs } = await chat(["Show me Mercedes-Benz", "What's the on-road cost of the second one?"]);
+  const shownCars = shown(outs[0]);
+  assert.ok(shownCars.length >= 2);
+  assert.equal(last.answers[0].car.id, shownCars[1].id);
+  const vague = await chat(["Show me Mercedes-Benz", "what is the on-road cost?"]);
+  assert.equal(vague.last.answers[0].resolved, false, "asks which car instead of picking one");
+});

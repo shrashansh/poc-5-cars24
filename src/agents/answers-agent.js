@@ -29,7 +29,7 @@ function resolveCar(p, shown, q) {
   let id = null;
   if (q.listingRef && shown[q.listingRef - 1]) id = shown[q.listingRef - 1].id;
   if (!id && q.model) id = shown.find((c) => c.model?.toLowerCase() === q.model.toLowerCase())?.id;
-  if (!id && !q.model && shown[0]) id = shown[0].id;
+  if (!id && !q.model && shown.length === 1) id = shown[0].id; // only one car on screen: "it" is unambiguous
   if (id) return inventory().cars.find((c) => c.id === id) || null;
   if (!q.model) return null;
   const home = findCity(p.homeCity);

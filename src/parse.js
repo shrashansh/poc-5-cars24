@@ -16,6 +16,15 @@ const FUEL_WORDS = { Petrol: ["petrol"], Diesel: ["diesel"], CNG: ["cng"], Elect
 export const NEG = /(why am i seeing|why are you showing|recommending me|instead of|don'?t want|do not want|not interested|stop showing|no more|don'?t show|do not show|never show|hate|nahi chahiye|mat dikhao|without)/;
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function modelKeys(k) {
+  const keys = new Set([k]);
+  const noClass = k.replace(/ class$/, "");
+  if (noClass !== k && /\d|^[a-z]{1,3}$/.test(noClass)) keys.add(noClass); // "glc class" -> "glc", "c class" -> "c-class" below
+  if (noClass !== k) keys.add(`${noClass}-class`), keys.add(`${noClass} class`);
+  keys.add(k.replace(/- /g, "-")).add(k.replace(/- /g, " ")); // "f- pace" -> "f-pace", "f pace"
+  if (/^[a-z]+ \d+$/.test(k)) keys.add(k.replace(" ", "")); // "xc 60" -> "xc60"
+  return [...keys].filter((x) => !/^[a-z]$/.test(x));
+}
 export const has = (t, w) => new RegExp(`(^|[^a-z0-9])${esc(w)}([^a-z0-9]|$)`).test(t);
 
 function brandKeys() {
@@ -42,8 +51,10 @@ export function parse(text) {
     for (const { make, model } of inventory().vocab.models) {
       const k = model.toLowerCase();
       if (k.length < 2) continue;
-      const brandKeyed = (brands[make] || []).some((b) => has(sentence, `${b} ${k}`));
-      if (!brandKeyed && (SAFE_AFTER_BRAND_ONLY.has(k) || k.length < 3 || !has(sentence, k))) continue;
+      // How buyers type listing names: "GLC" for "GLC Class", "XC60" for "XC 60", "F-Pace" for "F- Pace".
+      const keys = modelKeys(k);
+      const brandKeyed = (brands[make] || []).some((b) => keys.some((x) => has(sentence, `${b} ${x}`)));
+      if (!brandKeyed && (SAFE_AFTER_BRAND_ONLY.has(k) || k.length < 3 || !keys.some((x) => x.length >= 3 && has(sentence, x)))) continue;
       if (AMBIGUOUS_MODELS.has(k) && !brandKeyed && !/\b(show|want|looking|buy|any|find|search)\b/.test(sentence)) continue;
       const list = negative ? d.rejectModels : d.models;
       if (!list.includes(model)) list.push(model);
@@ -95,8 +106,7 @@ export function parse(text) {
 
   if (/on-?road|total cost|final price|all[- ]in|including transfer|landed cost/.test(t)) {
     const ref = t.match(/\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\b/);
-    const idx = ref ? ["first", "second", "third", "fourth", "fifth"].indexOf(ref[1].replace(/(st|nd|rd|th)$/, "")) : -1;
-    const n = ref && /^\d/.test(ref[1]) ? parseInt(ref[1], 10) : idx + 1;
+    const n = !ref ? null : /^\d/.test(ref[1]) ? parseInt(ref[1], 10) : ["first", "second", "third", "fourth", "fifth"].indexOf(ref[1]) + 1;
     // Buyers name a model by its first word ("the GLC" for "GLC Class"), so match that too.
     const named = d.models[0] || inventory().vocab.models.find(({ model }) => {
       const head = model.toLowerCase().split(" ")[0];

@@ -50,7 +50,7 @@ const CASES = [
   // questions
   ["The car is HR26 registered and I stay in Noida, what paperwork?", { transfer: { regCode: "HR26", toCity: "noida" }, homeCity: null }],
   ["Do I need an NOC for a UP32 car if I'm in Lucknow?", { transfer: { regCode: "UP32", toCity: "lucknow" } }],
-  ["what will the GLC cost me all-in?", { onRoad: { model: "GLC" } }],
+  ["what will the GLC cost me all-in?", { onRoad: { model: "GLC Class" } }],
   ["final price of the second one including transfer?", { onRoad: { listingRef: 2 } }],
   // widen / reset
   ["fine, show me other brands too", { widen: true }],

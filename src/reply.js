@@ -72,8 +72,10 @@ export function templateReply(turn) {
       if (near?.cars.length) out.push(`Plus ${near.total} nearby: ${near.cars[0].title} at ${lakh(near.cars[0].priceLakh)} in ${near.cars[0].city} (~${near.cars[0].distanceKm} km).`);
     }
     else if (first) out.push(`Nothing for ${exact.label} right now. Closest fit: ${first.label}. ${first.cars[0].title} at ${lakh(first.cars[0].priceLakh)} in ${first.cars[0].city}.`);
-    else if (s.beyond.length) out.push(`Nothing within ${s.radiusKm} km of ${s.origin.label} yet. Nearest matching stock: ${s.beyond.slice(0, 2).map((b) => `${b.city} (~${b.km} km, ${b.count} car${b.count === 1 ? "" : "s"})`).join(", ")}. Want me to widen the radius?`);
+    else if (s.beyond.length && !s.steps.some((x) => x.key === "saved" && x.cars.length)) out.push(`Nothing within ${s.radiusKm} km of ${s.origin.label} yet. Nearest matching stock: ${s.beyond.slice(0, 2).map((b) => `${b.city} (~${b.km} km, ${b.count} car${b.count === 1 ? "" : "s"})`).join(", ")}. Want me to widen the radius?`);
     else out.push("No listing matches all your filters right now. Want me to relax the budget or another filter?");
+    const saved = s.steps.find((x) => x.key === "saved" && x.cars.length);
+    if (saved && saved !== first) out.push(`Still in your list from earlier: ${saved.cars.slice(0, 2).map((c) => `${c.title} at ${lakh(c.priceLakh)}`).join(", ")}${saved.total > 2 ? ` and ${saved.total - 2} more` : ""}.`);
     if (s.withheld && !turn.profile.widened && turn.profile.brands.length) out.push(`I've kept ${s.withheld} cheaper or other-segment cars out; say “show other brands” to see them.`);
   }
   if (turn.escalation.call) out.push("An advisor will call you. They already have your shortlist and questions, so you won't have to repeat anything.");

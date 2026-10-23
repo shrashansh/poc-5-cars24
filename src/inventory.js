@@ -7,7 +7,8 @@ import { tierOf, CITY_ALIAS } from "./rules.js";
 let INV = { cars: [], cities: [], capturedAt: null, vocab: { makes: [], models: [] } };
 
 // cars24 cards mix "GLC CLASS" and "CLA Class"; keep short codes (GLC, XUV700) and soften shouted words.
-const tidy = (s) => (s ? s.split(" ").map((w) => (w.length > 3 && /^[A-Z]+$/.test(w) ? w[0] + w.slice(1).toLowerCase() : w)).join(" ") : s);
+const tidy = (s) => (s ? s.split(" ").map((w) => (w.length > 3 && /^[A-Z]+$/.test(w) ? w[0] + w.slice(1).toLowerCase() : w)).join(" ")
+  .replace(/^([A-Z]+)- (\w)/, "$1-$2").replace(/^(XC) (\d+)$/, "$1$2").replace(/^Ml Class$/, "ML Class") : s);
 
 export function setInventory({ cars, cities, capturedAt = null }) {
   const enriched = cars.filter((c) => c.priceLakh && c.make && c.status !== "SOLD").map((c) => ({ ...c, model: tidy(c.model), tier: c.tier || tierOf(c.make) }));

@@ -32,7 +32,7 @@ export function nearestCity(lat, lon) {
 export function locate({ lat, lon, accuracy }) {
   const near = nearestCity(lat, lon);
   return {
-    lat: Math.round(lat * 1e4) / 1e4, lon: Math.round(lon * 1e4) / 1e4, // ~11 m; enough for a city-level search
+    lat: Math.round(lat * 100) / 100, lon: Math.round(lon * 100) / 100, // ~1 km: enough for a city-level search, not a street address
     accuracyM: typeof accuracy === "number" ? Math.round(accuracy) : null,
     source: "gps", at: new Date().toISOString(),
     city: near?.city.name || null, cityKm: near?.km ?? null,
