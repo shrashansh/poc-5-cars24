@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CarGPT Intent Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root {
+  --bg: #f6f6fb; --surface: #ffffff; --sunk: #eeeef7; --line: #dcdcec;
+  --fg: #16162a; --muted: #5d5d78;
+  --brand: #4736fe; --brand-soft: #e9e7ff; --on-brand: #ffffff;
+  --bad: #c42b3b; --bad-soft: #fde9eb; --good: #13805a; --good-soft: #e2f5ec; --warn: #9a5b00; --warn-soft: #fff1d9;
+  --f-display: "Bricolage Grotesque", "Figtree", system-ui, sans-serif;
+  --f-body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #101020; --surface: #1a1a2e; --sunk: #14142a; --line: #2e2e4a; --fg: #ececf8; --muted: #a2a2c0;
+  --brand: #8f85ff; --brand-soft: #262150; --on-brand: #0f0f22;
+  --bad: #ff7f8c; --bad-soft: #3a1820; --good: #5fd3a2; --good-soft: #12301f; --warn: #f2b65a; --warn-soft: #33260f; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #101020; --surface: #1a1a2e; --sunk: #14142a; --line: #2e2e4a; --fg: #ececf8; --muted: #a2a2c0;
+  --brand: #8f85ff; --brand-soft: #262150; --on-brand: #0f0f22;
+  --bad: #ff7f8c; --bad-soft: #3a1820; --good: #5fd3a2; --good-soft: #12301f; --warn: #f2b65a; --warn-soft: #33260f; color-scheme: dark }
+
+* { box-sizing: border-box }
+html, body { margin: 0 }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--f-body); min-height: 100vh }
+button, input, select, textarea { font: inherit; color: inherit }
+h1, h2, h3 { font-family: var(--f-display); margin: 0; letter-spacing: -0.01em; text-wrap: balance }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+.muted { color: var(--muted) }
+.eyebrow { font: 600 .7rem/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px }
+
+header { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px max(16px, env(safe-area-inset-left)); border-bottom: 1px solid var(--line); background: var(--surface); position: sticky; top: 0; z-index: 5 }
+header h1 { font-size: 1.15rem }
+.badge { font: 600 .72rem/1 var(--f-mono); padding: 5px 8px; border-radius: 99px; background: var(--sunk); color: var(--muted); white-space: nowrap }
+.badge.on { background: var(--good-soft); color: var(--good) } .badge.off { background: var(--warn-soft); color: var(--warn) }
+nav.tabs { display: flex; gap: 4px; margin-left: auto }
+nav.tabs button { border: 1px solid var(--line); background: transparent; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-weight: 600 }
+nav.tabs button[aria-selected="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg) }
+
+.app { display: grid; grid-template-columns: 250px minmax(0, 1fr) 330px; height: calc(100vh - 57px) }
+@media (max-width: 1100px) { .app { grid-template-columns: 220px minmax(0, 1fr); height: auto } .side-r { grid-column: 1 / -1; border-left: 0 !important; border-top: 1px solid var(--line) } .chat { height: 80vh } }
+@media (max-width: 720px) { .app { grid-template-columns: minmax(0, 1fr) } .side-l { border-right: 0 !important; border-bottom: 1px solid var(--line) } }
+.side-l, .side-r { padding: 14px 16px; overflow-y: auto; display: grid; gap: 16px; align-content: start }
+.side-l { border-right: 1px solid var(--line) }
+.side-r { border-left: 1px solid var(--line) }
+.panel { display: grid; gap: 8px }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 7px 11px; cursor: pointer; font-weight: 600; font-size: .86rem }
+.btn.primary { background: var(--brand); color: var(--on-brand); border-color: var(--brand) }
+.btn:disabled { opacity: .5; cursor: default }
+select, input[type=text], textarea { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 8px 10px; width: 100% }
+.list { display: grid; gap: 4px }
+.item { text-align: left; border: 1px solid transparent; background: transparent; border-radius: 8px; padding: 7px 9px; cursor: pointer; display: grid; gap: 1px; width: 100% }
+.item:hover { background: var(--sunk) }
+.item[aria-current="true"] { background: var(--brand-soft); border-color: var(--brand) }
+.item b { font-weight: 600; font-size: .88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.item span { font-size: .76rem; color: var(--muted) }
+form.new-user { display: grid; gap: 6px; padding: 10px; background: var(--sunk); border-radius: var(--r) }
+
+.chat { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0 }
+.thread { overflow-y: auto; padding: 18px max(16px, 3vw); display: grid; gap: 14px; align-content: start }
+.msg { max-width: 760px; display: grid; gap: 8px; min-width: 0 }
+.msg.user { justify-self: end; background: var(--fg); color: var(--bg); padding: 9px 13px; border-radius: 14px 14px 4px 14px; max-width: 560px }
+.msg.bot .bubble { background: var(--surface); border: 1px solid var(--line); padding: 10px 13px; border-radius: 14px 14px 14px 4px }
+.meta { display: flex; flex-wrap: wrap; gap: 5px; align-items: center }
+.chip { font-size: .74rem; padding: 3px 8px; border-radius: 99px; background: var(--sunk); color: var(--muted); border: 1px solid var(--line) }
+.chip.src-llm, .chip.src-llm-cache { background: var(--brand-soft); color: var(--brand); border-color: transparent }
+.chip.change { background: var(--brand-soft); color: var(--fg); border-color: transparent }
+.promise { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: .84rem; background: var(--good-soft); border-radius: 8px; padding: 7px 10px }
+.promise .k { color: var(--good); font-weight: 700 } .promise small { grid-column: 2; color: var(--muted) }
+.answer { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--good); border-radius: 8px; padding: 9px 12px; font-size: .88rem; display: grid; gap: 6px }
+.answer ol { margin: 0; padding-left: 18px } .answer table { border-collapse: collapse; width: 100% } .answer td { padding: 3px 6px; border-top: 1px solid var(--line); vertical-align: top } .answer td:first-child { color: var(--muted); width: 40% }
+.esc { font-size: .84rem; padding: 7px 10px; border-radius: 8px; background: var(--warn-soft) }
+.esc.call { background: var(--brand-soft) }
+details.steps { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 12px }
+details.steps summary { cursor: pointer; font-weight: 600; font-size: .88rem }
+.step { display: grid; gap: 6px; margin-top: 10px }
+.step h4 { margin: 0; font-size: .8rem; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline } .step h4 .n { font: 600 .72rem var(--f-mono); color: var(--muted) }
+.cars { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px }
+.car { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: grid; align-content: start; background: var(--surface); text-decoration: none; color: inherit }
+.car img { width: 100%; aspect-ratio: 16/10; object-fit: contain; background: var(--sunk) }
+.car .noimg { aspect-ratio: 16/10; background: var(--sunk) }
+.car div { padding: 7px 9px; display: grid; gap: 1px }
+.car b { font-size: .86rem } .car .p { font: 700 .95rem var(--f-display); color: var(--fg) } .car span { font-size: .74rem; color: var(--muted) }
+.beyond { font-size: .82rem; color: var(--muted); margin: 8px 0 0 }
+.composer { border-top: 1px solid var(--line); padding: 10px max(16px, 3vw) max(12px, env(safe-area-inset-bottom)); display: grid; gap: 8px; background: var(--surface) }
+.composer form { display: grid; grid-template-columns: 1fr auto; gap: 8px }
+.composer textarea { resize: none; height: 44px }
+.sugg { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px }
+.sugg button { white-space: nowrap; border: 1px solid var(--line); background: var(--bg); border-radius: 99px; padding: 4px 10px; font-size: .78rem; cursor: pointer }
+.typing { font-size: .82rem; color: var(--muted) }
+
+.mem { display: flex; flex-wrap: wrap; gap: 5px }
+.mem .chip { display: inline-flex; gap: 5px; align-items: center; color: var(--fg) }
+.mem .chip.neg { background: var(--bad-soft); border-color: transparent }
+.mem .chip button { border: 0; background: transparent; cursor: pointer; padding: 0 2px; color: var(--muted); font-weight: 700 }
+.feed { display: grid; gap: 6px }
+.feed a { display: grid; grid-template-columns: 1fr auto; gap: 6px; font-size: .82rem; padding: 6px 8px; border-radius: 6px; background: var(--sunk); text-decoration: none; color: inherit }
+.log { display: grid; gap: 6px; font-size: .78rem }
+.log div { border-left: 2px solid var(--line); padding-left: 8px }
+.empty { color: var(--muted); font-size: .84rem; margin: 0 }
+
+.advisor { padding: 16px max(16px, 3vw); display: grid; gap: 14px; max-width: 1100px; margin: 0 auto }
+#tickets { display: grid; gap: 12px }
+.ticket { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; display: grid; gap: 8px }
+.ticket.closed { opacity: .6 }
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 4px 10px; font-size: .86rem; margin: 0 } .kv dt { color: var(--muted) } .kv dd { margin: 0 }
+@media (max-width: 560px) { .kv { grid-template-columns: 1fr } }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: .86rem; z-index: 10 }
+[hidden] { display: none !important }
+</style>
+</head>
+<body>
+<header>
+  <h1>CarGPT Intent Engine</h1>
+  <span class="badge" id="dataBadge">loading…</span>
+  <span class="badge" id="llmBadge"></span>
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="buyer">Buyer</button>
+    <button role="tab" aria-selected="false" data-tab="advisor">Advisor console</button>
+  </nav>
+</header>
+
+<main id="buyerView" class="app">
+  <aside class="side-l">
+    <div class="panel">
+      <div class="eyebrow">Buyer</div>
+      <select id="userSelect" aria-label="Choose buyer"></select>
+      <button class="btn" id="newUserBtn">+ New buyer</button>
+      <form class="new-user" id="newUserForm" hidden>
+        <input type="text" name="name" placeholder="Name" required maxlength="60">
+        <select name="homeCity" id="citySelect" required></select>
+        <div class="row"><button class="btn primary">Create</button><button class="btn" type="button" id="cancelNewUser">Cancel</button></div>
+      </form>
+    </div>
+    <div class="panel">
+      <div class="row" style="justify-content:space-between"><div class="eyebrow">Chats</div><button class="btn" id="newSessionBtn">+ New chat</button></div>
+      <div class="list" id="sessionList"></div>
+    </div>
+  </aside>
+
+  <section class="chat">
+    <div class="thread" id="thread" aria-live="polite"></div>
+    <div class="composer">
+      <div class="sugg" id="sugg"></div>
+      <form id="composer">
+        <textarea id="input" placeholder="Ask about any car, budget, city, RC transfer…" maxlength="1000" aria-label="Message"></textarea>
+        <button class="btn primary" id="sendBtn">Send</button>
+      </form>
+    </div>
+  </section>
+
+  <aside class="side-r">
+    <div class="panel">
+      <div class="eyebrow">What CarGPT remembers</div>
+      <p class="muted" style="margin:0;font-size:.82rem">Shared by every chat, the app feed, the advisor and the dialer. Tap × to forget.</p>
+      <div class="mem" id="memory"></div>
+    </div>
+    <div class="panel">
+      <div class="eyebrow">App feed: “Recommended for you”</div>
+      <p class="muted" style="margin:0;font-size:.82rem">Same profile, same filters. This is where promises are checked.</p>
+      <div class="feed" id="feed"></div>
+    </div>
+    <div class="panel">
+      <div class="eyebrow">Activity</div>
+      <div class="log" id="log"></div>
+    </div>
+  </aside>
+</main>
+
+<main id="advisorView" class="advisor" hidden>
+  <div>
+    <h2>Advisor console</h2>
+    <p class="muted" style="margin:4px 0 0">Every ticket comes with a context packet. The dialer checks consent before every call.</p>
+  </div>
+  <div id="tickets"></div>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const ADVISOR_KEY = "advisor-demo"; // demo only: lets this page list seeded buyers and their tokens
+const $ = (s) => document.querySelector(s);
+// Every dynamic value is passed through esc() before it reaches setHTML.
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const setHTML = (el, html) => el.replaceChildren(document.createRange().createContextualFragment(html));
+const ls = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+const state = { users: [], tokens: ls.get("tokens") || {}, userId: ls.get("userId"), sessionId: null, busy: false };
+const when = (iso) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2600); }
+
+async function api(path, { method = "GET", body, advisor } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (state.userId && state.tokens[state.userId]) headers["X-User-Token"] = state.tokens[state.userId];
+  if (advisor) headers["X-Advisor-Key"] = ADVISOR_KEY;
+  const r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.message || `HTTP ${r.status}`);
+  return j;
+}
+
+// ---------- boot ----------
+async function boot() {
+  const h = await api("/api/health");
+  $("#dataBadge").textContent = `${h.cars.toLocaleString("en-IN")} live listings · ${h.cities} cities${h.capturedAt ? " · pulled " + new Date(h.capturedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""}`;
+  $("#llmBadge").textContent = h.llm ? `LLM: ${h.model}` : "LLM off: rules";
+  $("#llmBadge").className = `badge ${h.llm ? "on" : "off"}`;
+  const cities = await api("/api/cities");
+  setHTML($("#citySelect"), cities.map((c) => `<option value="${esc(c.slug)}">${esc(c.name)} · ${esc(c.totalListed ?? "?")} cars</option>`).join(""));
+  await loadUsers();
+}
+
+async function loadUsers() {
+  state.users = await api("/api/users", { advisor: true });
+  for (const u of state.users) if (u.token) state.tokens[u.id] = u.token;
+  ls.set("tokens", state.tokens);
+  if (!state.users.some((u) => u.id === state.userId)) state.userId = state.users[0]?.id || null;
+  setHTML($("#userSelect"), state.users.map((u) => `<option value="${esc(u.id)}" ${u.id === state.userId ? "selected" : ""}>${esc(u.name)} · ${esc(u.profile.homeCity)} · ${u.sessions} chat${u.sessions === 1 ? "" : "s"}</option>`).join("") || `<option>No buyers yet</option>`);
+  await selectUser(state.userId);
+}
+
+async function selectUser(id) {
+  state.userId = id; ls.set("userId", id);
+  state.sessionId = null;
+  if (!id) { setHTML($("#thread"), `<p class="empty">Create a buyer to start.</p>`); return; }
+  await loadSessions();
+  await refreshSide();
+}
+
+function renderSessions(sessions) {
+  setHTML($("#sessionList"), sessions.map((s) => `<button class="item" data-id="${esc(s.id)}" aria-current="${s.id === state.sessionId}"><b>${esc(s.title)}</b><span>${esc(when(s.lastAt))} · ${s.turns} message${s.turns === 1 ? "" : "s"}</span></button>`).join("") || `<p class="empty">No chats yet.</p>`);
+}
+
+async function loadSessions(selectId) {
+  const sessions = await api(`/api/users/${state.userId}/sessions`);
+  state.sessionId = selectId || state.sessionId || sessions[0]?.id || null;
+  renderSessions(sessions);
+  if (!state.sessionId) await newSession(); else await loadThread();
+}
+
+async function newSession() {
+  const r = await api(`/api/users/${state.userId}/sessions`, { method: "POST", body: { channel: "web" } });
+  await loadSessions(r.session.id);
+  await loadUsersQuiet();
+}
+
+async function loadUsersQuiet() {
+  state.users = await api("/api/users", { advisor: true });
+  setHTML($("#userSelect"), state.users.map((u) => `<option value="${esc(u.id)}" ${u.id === state.userId ? "selected" : ""}>${esc(u.name)} · ${esc(u.profile.homeCity)} · ${u.sessions} chat${u.sessions === 1 ? "" : "s"}</option>`).join(""));
+}
+
+async function loadThread() {
+  const msgs = await api(`/api/users/${state.userId}/sessions/${state.sessionId}/messages`);
+  $("#thread").replaceChildren();
+  for (const m of msgs) appendMsg(m.role, m.text, m.meta?.turn);
+  renderSuggestions();
+}
+
+// ---------- rendering ----------
+function carCard(c) {
+  const img = c.image ? `<img src="${esc(c.image)}" alt="" loading="lazy">` : `<div class="noimg"></div>`;
+  const inner = `${img}<div><b>${esc(c.title)}</b><span>${esc(c.variant || "")}</span><span class="p">${esc(c.price)}</span><span>${c.km ? esc(c.km.toLocaleString("en-IN")) + " km · " : ""}${esc(c.fuel || "")} · ${esc(c.transmission || "")}${c.body ? " · " + esc(c.body) : ""}</span><span>${esc(c.city)}${c.distanceKm ? ` · ~${esc(c.distanceKm)} km` : ""}${c.reg ? ` · ${esc(c.reg)}` : ""}</span></div>`;
+  return c.url ? `<a class="car" href="${esc(c.url)}" target="_blank" rel="noopener">${inner}</a>` : `<div class="car">${inner}</div>`;
+}
+
+function turnExtras(t) {
+  let h = "";
+  const meta = [`<span class="chip src-${esc(t.extraction?.source)}">${t.extraction?.source === "rules" ? "rules" : "LLM"} understood</span>`];
+  for (const c of t.changes || []) meta.push(`<span class="chip change">${esc(c.label)}</span>`);
+  if (t.replyRejected) meta.push(`<span class="chip" title="${esc(t.replyRejected.problems.join("; "))}">LLM reply blocked by guard</span>`);
+  h += `<div class="meta">${meta.join("")}</div>`;
+  for (const c of t.commitments || []) h += `<div class="promise"><span class="k">✓</span><span>${esc(c.promise)}</span><small>Enforced by: ${esc(c.enforcedBy)}</small></div>`;
+  for (const a of t.answers || []) {
+    h += `<div class="answer"><b>${a.type === "transfer" ? "RC transfer" : "On-road cost"}</b><span>${esc(a.text)}</span>`;
+    if (a.steps) h += `<ol>${a.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`;
+    if (a.lines) h += `<table>${a.lines.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>`;
+    if (a.caveat) h += `<small class="muted">${esc(a.caveat)}</small>`;
+    h += `</div>`;
+  }
+  if (t.search) {
+    const s = t.search;
+    const shown = s.steps.reduce((n, x) => n + x.cars.length, 0);
+    h += `<details class="steps" ${shown ? "open" : ""}><summary>${esc(s.matched)} matching car${s.matched === 1 ? "" : "s"} · searched ${esc(s.citiesSearched.join(", "))}</summary>`;
+    for (const st of s.steps) {
+      h += `<div class="step"><h4><span class="n">${esc(st.key)}</span>${esc(st.label)} <span class="muted">· ${esc(st.total)}</span></h4>`;
+      h += st.cars.length ? `<div class="cars">${st.cars.map(carCard).join("")}</div>` : `<span class="beyond">None.</span>`;
+      h += `</div>`;
+    }
+    if (s.beyond?.length) h += `<p class="beyond">Beyond your radius: ${s.beyond.map((b) => `${esc(b.city)} (~${esc(b.km)} km): ${esc(b.count)}`).join(" · ")}</p>`;
+    if (s.withheld) h += `<p class="beyond">${esc(s.withheld)} cars from other segments withheld.</p>`;
+    h += `</details>`;
+  }
+  if (t.escalation && (t.escalation.escalate || t.escalation.ask)) h += `<div class="esc ${t.escalation.call ? "call" : ""}">${esc(t.escalation.reason)}${t.escalation.ticketId ? ` · ticket <span class="mono">${esc(t.escalation.ticketId)}</span>` : ""}</div>`;
+  return h;
+}
+
+function appendMsg(role, text, turn) {
+  const el = document.createElement("div");
+  el.className = `msg ${role === "user" ? "user" : "bot"}`;
+  if (role === "user") el.textContent = text;
+  else setHTML(el, `<div class="bubble">${esc(text)}</div>${turn ? turnExtras(turn) : ""}`);
+  $("#thread").appendChild(el);
+  $("#thread").scrollTop = $("#thread").scrollHeight;
+  return el;
+}
+
+const MEM_FIELDS = [
+  ["brands", "", false], ["models", "", false], ["includeBodies", "", false], ["fuels", "", false], ["cities", "+ ", false],
+  ["rejectBrands", "no ", true], ["rejectModels", "no ", true], ["excludeBodies", "no ", true], ["excludeFuels", "no ", true],
+];
+async function refreshSide() {
+  if (!state.userId) return;
+  const [{ profile: p, events }, feed] = await Promise.all([api(`/api/users/${state.userId}/profile`), api(`/api/users/${state.userId}/feed`)]);
+  const x = (f, v) => `<button data-f="${esc(f)}" ${v !== undefined ? `data-v="${esc(v)}"` : ""} aria-label="Forget">×</button>`;
+  const chips = [`<span class="chip">📍 ${esc(p.homeCity)} · ${esc(p.radiusKm)} km${p.radiusKm !== 50 ? " " + x("radiusKm") : ""}</span>`];
+  for (const [f, pre, neg] of MEM_FIELDS) for (const v of p[f]) chips.push(`<span class="chip ${neg ? "neg" : ""}">${pre}${esc(v)} ${x(f, v)}</span>`);
+  if (p.budgetMax) chips.push(`<span class="chip">≤ ₹${esc(p.budgetMax)}L ${x("budgetMax")}</span>`);
+  if (p.budgetMin) chips.push(`<span class="chip">≥ ₹${esc(p.budgetMin)}L ${x("budgetMin")}</span>`);
+  if (p.transmission) chips.push(`<span class="chip">${esc(p.transmission)} ${x("transmission")}</span>`);
+  if (p.yearMin) chips.push(`<span class="chip">${esc(p.yearMin)}+ ${x("yearMin")}</span>`);
+  if (p.tier) chips.push(`<span class="chip">segment: ${esc(p.tier)}</span>`);
+  if (p.widened) chips.push(`<span class="chip">open to other brands ${x("widened")}</span>`);
+  chips.push(`<span class="chip ${p.callConsent === false ? "neg" : ""}">${p.callConsent === false ? "🔕 no calls" : p.callConsent ? "📞 call requested" : "calls: not asked"}${p.callConsent !== null ? " " + x("callConsent") : ""}</span>`);
+  setHTML($("#memory"), chips.join(""));
+  setHTML($("#feed"), feed.cars.length ? feed.cars.slice(0, 8).map((c) => `<a href="${esc(c.url || "#")}" target="_blank" rel="noopener"><span>${esc(c.title)} · ${esc(c.city)}</span><b class="mono">₹${esc(c.priceLakh)}L</b></a>`).join("") : `<p class="empty">Nothing yet. Tell CarGPT what you want.</p>`);
+  setHTML($("#log"), events.slice().reverse().slice(0, 25).map((e) => `<div><span class="muted mono">${esc(new Date(e.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }))}</span> ${esc((e.changes || [e.detail]).join(" · "))}${e.source ? ` <span class="muted">(${esc(e.source)})</span>` : ""}</div>`).join("") || `<p class="empty">No activity yet.</p>`);
+}
+
+const SUGGESTIONS = [
+  "Show me Mercedes in my city", "BMW under 20 lakhs near me", "Search within 200 km", "No hatchbacks please",
+  "Creta ya Seltos chahiye 12 lakh tak, automatic", "I'm buying a UP78 car and live in Delhi, transfer process?",
+  "What's the on-road cost of the first one?", "Don't call me, just answer here", "Have an advisor call me", "Start over",
+];
+function renderSuggestions() { setHTML($("#sugg"), SUGGESTIONS.map((s) => `<button type="button">${esc(s)}</button>`).join("")); }
+
+// ---------- actions ----------
+async function send(text) {
+  text = text.trim();
+  if (!text || state.busy || !state.sessionId) return;
+  state.busy = true; $("#sendBtn").disabled = true; $("#input").value = "";
+  appendMsg("user", text);
+  const typing = document.createElement("div"); typing.className = "typing"; typing.textContent = "CarGPT is searching…"; $("#thread").appendChild(typing);
+  // The same clientMsgId on a retry makes the server return the stored answer instead of running twice.
+  const clientMsgId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
+  const path = `/api/users/${state.userId}/sessions/${state.sessionId}/messages`;
+  try {
+    let r;
+    try { r = await api(path, { method: "POST", body: { text, clientMsgId } }); }
+    catch (e) { if (/fetch|network/i.test(e.message)) r = await api(path, { method: "POST", body: { text, clientMsgId } }); else throw e; }
+    typing.remove();
+    appendMsg("bot", r.reply, r);
+    renderSessions(await api(`/api/users/${state.userId}/sessions`));
+    await refreshSide();
+  } catch (e) { typing.remove(); toast(e.message); }
+  finally { state.busy = false; $("#sendBtn").disabled = false; $("#input").focus(); }
+}
+
+$("#composer").addEventListener("submit", (e) => { e.preventDefault(); send($("#input").value); });
+$("#input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("#input").value); } });
+$("#sugg").addEventListener("click", (e) => { if (e.target.tagName === "BUTTON") send(e.target.textContent); });
+$("#userSelect").addEventListener("change", (e) => selectUser(e.target.value));
+$("#sessionList").addEventListener("click", (e) => { const b = e.target.closest(".item"); if (b) loadSessions(b.dataset.id); });
+$("#newSessionBtn").addEventListener("click", () => state.userId && newSession());
+$("#newUserBtn").addEventListener("click", () => { $("#newUserForm").hidden = false; $("#newUserForm").elements.name.focus(); });
+$("#cancelNewUser").addEventListener("click", () => ($("#newUserForm").hidden = true));
+$("#newUserForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    const r = await api("/api/users", { method: "POST", body: { name: f.elements.name.value, homeCity: f.elements.homeCity.value } });
+    state.tokens[r.user.id] = r.token; ls.set("tokens", state.tokens);
+    state.userId = r.user.id; f.reset(); f.hidden = true;
+    await loadUsers();
+  } catch (err) { toast(err.message); }
+});
+$("#memory").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-f]"); if (!b) return;
+  try { await api(`/api/users/${state.userId}/profile`, { method: "DELETE", body: { field: b.dataset.f, value: b.dataset.v } }); toast("Forgotten"); await refreshSide(); } catch (err) { toast(err.message); }
+});
+
+// ---------- advisor ----------
+async function loadTickets() {
+  const tickets = await api("/api/advisor/tickets", { advisor: true });
+  setHTML($("#tickets"), tickets.length ? tickets.map((t) => {
+    const p = t.packet || {};
+    return `<article class="ticket ${esc(t.status)}">
+      <div class="row" style="justify-content:space-between"><b>${esc(t.buyer)} · <span class="mono">${esc(t.id)}</span></b><span class="badge ${t.status === "open" ? (t.callRequested ? "on" : "off") : ""}">${esc(t.status)}${t.callRequested ? " · call requested" : " · async"}</span></div>
+      <dl class="kv">
+        <dt>Intent</dt><dd>${esc(p.intent)}</dd>
+        <dt>Blocked</dt><dd>${esc((p.blocked || []).join(", ") || "—")}</dd>
+        <dt>Call consent</dt><dd>${esc(p.callConsent)}</dd>
+        <dt>Sessions</dt><dd>${esc(p.sessions)}</dd>
+        <dt>Open questions</dt><dd>${(p.openQuestions || []).map(esc).join("<br>") || "—"}</dd>
+        <dt>Shortlist</dt><dd>${(p.shortlist || []).map((c) => `${esc(c.title)} · ${esc(c.price)} · ${esc(c.city)}`).join("<br>") || "—"}</dd>
+        <dt>Suggested opener</dt><dd>${esc(p.opener)}</dd>
+      </dl>
+      <div class="row"><button class="btn primary" data-dial="${esc(t.userId)}">Dial buyer</button>${t.status === "open" ? `<button class="btn" data-close="${esc(t.id)}">Close ticket</button>` : ""}<span class="muted" data-dialres="${esc(t.userId)}"></span></div>
+      <details><summary class="muted">History</summary>${t.updates.map((u) => `<div class="muted" style="font-size:.8rem">${esc(when(u.at))} · ${esc(u.text)}</div>`).join("")}</details>
+    </article>`;
+  }).join("") : `<p class="empty">No tickets yet. A ticket opens when a buyer asks for a call, or asks something chat can't answer while calls are off.</p>`);
+}
+$("#tickets").addEventListener("click", async (e) => {
+  const dial = e.target.closest("[data-dial]"), close = e.target.closest("[data-close]");
+  try {
+    if (dial) { const r = await api("/api/dialer/check", { method: "POST", advisor: true, body: { userId: dial.dataset.dial } }); document.querySelectorAll(`[data-dialres="${CSS.escape(dial.dataset.dial)}"]`).forEach((el) => (el.textContent = `${r.allowed ? "✅ Dialing" : "⛔ Blocked"}: ${r.reason}`)); }
+    if (close) { await api(`/api/advisor/tickets/${close.dataset.close}/close`, { method: "POST", advisor: true, body: { note: "Resolved by advisor" } }); await loadTickets(); }
+  } catch (err) { toast(err.message); }
+});
+
+document.querySelector("nav.tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tab]"); if (!b) return;
+  document.querySelectorAll("nav.tabs button").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+  $("#buyerView").hidden = b.dataset.tab !== "buyer";
+  $("#advisorView").hidden = b.dataset.tab !== "advisor";
+  if (b.dataset.tab === "advisor") loadTickets(); else refreshSide();
+});
+
+boot().catch((e) => toast(e.message));
+</script>
+</body>
+</html>

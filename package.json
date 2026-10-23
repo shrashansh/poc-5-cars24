@@ -1,0 +1,17 @@
+{
+  "name": "poc-5-cars24",
+  "version": "2.0.0",
+  "type": "module",
+  "private": true,
+  "description": "CarGPT Intent Engine: memory, intent-keeping search, enforced promises and consent-gated calls for Cars24's buying assistant",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "scrape": "node scripts/scrape.js",
+    "seed": "node scripts/seed.js",
+    "test": "node --test test/*.test.js",
+    "eval": "node scripts/eval.js",
+    "eval:llm": "node scripts/eval.js --llm",
+    "replay": "node scripts/replay-cli.js"
+  }
+}

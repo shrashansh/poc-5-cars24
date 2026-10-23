@@ -1,0 +1,59 @@
+{
+ "cities": [
+  {
+   "slug": "kanpur",
+   "name": "Kanpur",
+   "state": "UP",
+   "geo": [
+    26.4499,
+    80.3319
+   ],
+   "totalListed": 273,
+   "assuredServiceable": false
+  },
+  {
+   "slug": "lucknow",
+   "name": "Lucknow",
+   "state": "UP",
+   "geo": [
+    26.8467,
+    80.9462
+   ],
+   "totalListed": 682,
+   "assuredServiceable": false
+  },
+  {
+   "slug": "agra",
+   "name": "Agra",
+   "state": "UP",
+   "geo": [
+    27.1767,
+    78.0081
+   ],
+   "totalListed": 263,
+   "assuredServiceable": false
+  },
+  {
+   "slug": "prayagraj",
+   "name": "Prayagraj",
+   "state": "UP",
+   "geo": [
+    25.4358,
+    81.8463
+   ],
+   "totalListed": 150,
+   "assuredServiceable": false
+  },
+  {
+   "slug": "new-delhi",
+   "name": "New Delhi",
+   "state": "DL",
+   "geo": [
+    28.6129,
+    77.2295
+   ],
+   "totalListed": 2786,
+   "assuredServiceable": false
+  }
+ ]
+}

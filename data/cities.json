@@ -1,0 +1,230 @@
+{
+ "capturedAt": "2026-10-23T07:58:35.558Z",
+ "cities": [
+  {
+   "slug": "kanpur",
+   "name": "Kanpur",
+   "legacyId": 173,
+   "state": "UP",
+   "geo": [
+    26.4499,
+    80.3319
+   ],
+   "pincode": "208001",
+   "totalListed": 273,
+   "luxeCount": 10,
+   "captured": 205,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C"
+   ]
+  },
+  {
+   "slug": "lucknow",
+   "name": "Lucknow",
+   "legacyId": 290,
+   "state": "UP",
+   "geo": [
+    26.85,
+    80.9462
+   ],
+   "pincode": "226001",
+   "totalListed": 682,
+   "luxeCount": 8,
+   "captured": 229,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C",
+    "GS"
+   ]
+  },
+  {
+   "slug": "agra",
+   "name": "Agra",
+   "legacyId": 136,
+   "state": "UP",
+   "geo": [
+    27.1751,
+    78.0421
+   ],
+   "pincode": "282001",
+   "totalListed": 263,
+   "luxeCount": 4,
+   "captured": 188,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C",
+    "GS"
+   ]
+  },
+  {
+   "slug": "varanasi",
+   "name": "Varanasi",
+   "legacyId": 191,
+   "state": "UP",
+   "geo": [
+    25.3176,
+    82.9739
+   ],
+   "pincode": "209201",
+   "totalListed": 88,
+   "luxeCount": 3,
+   "captured": 84,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C"
+   ]
+  },
+  {
+   "slug": "noida",
+   "name": "Noida",
+   "legacyId": 134,
+   "state": "UP",
+   "geo": [
+    28.567,
+    77.321
+   ],
+   "pincode": "201301",
+   "totalListed": 1097,
+   "luxeCount": 5,
+   "captured": 239,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C",
+    "GS"
+   ]
+  },
+  {
+   "slug": "ghaziabad",
+   "name": "Ghaziabad",
+   "legacyId": 132,
+   "state": "UP",
+   "geo": [
+    28.6692,
+    77.4538
+   ],
+   "pincode": "201001",
+   "totalListed": 762,
+   "luxeCount": 2,
+   "captured": 255,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C",
+    "GS"
+   ]
+  },
+  {
+   "slug": "new-delhi",
+   "name": "New Delhi",
+   "legacyId": 2,
+   "state": "DL",
+   "geo": [
+    28.6129,
+    77.2295
+   ],
+   "pincode": "110001",
+   "totalListed": 2788,
+   "luxeCount": 20,
+   "captured": 254,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C",
+    "GS"
+   ]
+  },
+  {
+   "slug": "gurgaon",
+   "name": "Gurgaon",
+   "legacyId": 5,
+   "state": "HR",
+   "geo": [
+    28.4975,
+    77.088
+   ],
+   "pincode": "122001",
+   "totalListed": 1497,
+   "luxeCount": 12,
+   "captured": 213,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C",
+    "GS"
+   ]
+  },
+  {
+   "slug": "jaipur",
+   "name": "Jaipur",
+   "legacyId": 2130,
+   "state": "RJ",
+   "geo": [
+    26.9239,
+    75.8267
+   ],
+   "pincode": "302001",
+   "totalListed": 655,
+   "luxeCount": 13,
+   "captured": 270,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C",
+    "GS"
+   ]
+  },
+  {
+   "slug": "mumbai",
+   "name": "Mumbai",
+   "legacyId": 2378,
+   "state": "MH",
+   "geo": [
+    18.9218,
+    72.8347
+   ],
+   "pincode": "400001",
+   "totalListed": 2265,
+   "luxeCount": 45,
+   "captured": 271,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C",
+    "GS"
+   ]
+  },
+  {
+   "slug": "bangalore",
+   "name": "Bangalore",
+   "legacyId": 4709,
+   "state": "KA",
+   "geo": [
+    12.9758,
+    77.6055
+   ],
+   "pincode": "560001",
+   "totalListed": 2247,
+   "luxeCount": 27,
+   "captured": 271,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C",
+    "GS"
+   ]
+  },
+  {
+   "slug": "allahabad",
+   "name": "Allahabad",
+   "legacyId": 213,
+   "state": "UP",
+   "geo": [
+    25.4358,
+    81.8463
+   ],
+   "pincode": "211001",
+   "totalListed": 113,
+   "luxeCount": 1,
+   "captured": 105,
+   "assuredServiceable": false,
+   "serviceableVerticals": [
+    "C2C"
+   ]
+  }
+ ]
+}
